@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Manga Comic Generator</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <h1>Manga Comic Generator</h1>
+  <p class="subtitle">Add your cast, pick a theme, generate a comic.</p>
+
+  <form id="comic-form">
+    <div id="characters"></div>
+    <button type="button" id="add-character">+ Add character</button>
+
+    <label>
+      Theme (optional)
+      <input type="text" name="theme" placeholder="e.g. a heist that goes sideways" />
+    </label>
+
+    <button type="submit">Generate comic</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="pages"></div>
+
+  <template id="character-template">
+    <fieldset class="character">
+      <legend>Character</legend>
+      <label>Name <input type="text" class="name" required /></label>
+      <label>Backstory <textarea class="backstory" required></textarea></label>
+      <label>Personality <input type="text" class="personality" /></label>
+      <label>Visual description <input type="text" class="visual" placeholder="hair, outfit, distinguishing features" /></label>
+      <label>Reference photo <input type="file" class="image" accept="image/*" /></label>
+      <button type="button" class="remove">Remove</button>
+    </fieldset>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

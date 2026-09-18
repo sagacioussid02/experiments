@@ -1,0 +1,50 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #222;
+}
+
+.subtitle {
+  color: #666;
+  margin-top: -0.5rem;
+}
+
+fieldset.character {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+fieldset.character label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+fieldset.character input,
+fieldset.character textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+button {
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0.5rem 0.5rem 0;
+}
+
+#status {
+  margin-top: 1.5rem;
+  font-weight: bold;
+}
+
+#pages img {
+  display: block;
+  max-width: 100%;
+  margin: 1rem 0;
+  border: 1px solid #ccc;
+}
