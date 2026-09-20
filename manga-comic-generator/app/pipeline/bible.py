@@ -34,10 +34,11 @@ _BIBLE_TOOL = {
             },
             "colours": {"type": "object", "additionalProperties": {"type": "string"}},
             "expression_notes": {"type": "string"},
-            "never": {"type": "array", "items": {"type": "string"}},
+            "never": {"type": "array", "items": {"type": "string"}, "description": "Critical: features the real product does not have that would change what the character IS (teeth, fangs, claws, a tail, clothing, extra patches, accessories)."},
+            "never_minor": {"type": "array", "items": {"type": "string"}, "description": "Advisory: things expressive comic art tends to add but that do not change identity (eyebrows, visible fists/hands, feet detail, whiskers)."},
             "forbidden_words": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["summary", "markers", "colours", "expression_notes", "never", "forbidden_words"],
+        "required": ["summary", "markers", "colours", "expression_notes", "never", "never_minor", "forbidden_words"],
     },
 }
 
@@ -66,6 +67,8 @@ def bible_prompt_block(character: CharacterProfile) -> str:
         lines.append(f"- Expressions: {b.expression_notes}")
     if b.never:
         lines.append(f"- {character.name} NEVER has: " + "; ".join(b.never))
+    if b.never_minor:
+        lines.append(f"- Avoid if possible: " + "; ".join(b.never_minor))
     return "\n".join(lines)
 
 
@@ -78,6 +81,8 @@ def bible_checks(character: CharacterProfile) -> list[str] | None:
     checks = [f"{'' if m.critical else 'MINOR: '}{m.feature}: {m.description}" for m in b.markers]
     if b.never:
         checks.append("Nothing added: none of -- " + "; ".join(b.never))
+    if b.never_minor:
+        checks.append("MINOR: Nothing added (advisory): avoid -- " + "; ".join(b.never_minor))
     return checks
 
 

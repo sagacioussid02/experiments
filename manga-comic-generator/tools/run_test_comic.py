@@ -55,12 +55,13 @@ def clone_for_rerun(keep_sheets=(), reference_overrides=None) -> ComicProject:
         shutil.copy(src, d / src.name)
         old_sheet = c.sheet_image_path
         c.reference_image_path, c.sheet_image_path = str(d / src.name), None
-        c.sheet_candidates, c.sheet_approved = [], False
+        c.sheet_candidates, c.sheet_approved, c.approval, c.reconciliation = [], False, None, []
+        c.confidence = type(c.confidence)()
         if c.name in keep_sheets and old_sheet:
             shutil.copy(old_sheet, d / Path(old_sheet).name)
             c.sheet_image_path = str(d / Path(old_sheet).name)
         c.main = c.name == "Bruno"
-    project.cover_image_path = None
+    project.cover_image_path, project.qa_breaker = None, None
     for page in project.pages:
         for panel in page.panels:
             panel.image_path, panel.qa_attempts, panel.qa_passed, panel.qa_problems = None, 0, None, []

@@ -70,7 +70,7 @@ def test_panel_references_prefer_sheet_over_photo(tmp_path):
     assert gen._references(panel, [with_sheet]) == [photo]
 
 
-def test_sheet_stage_gives_main_candidates_supporting_one_and_skips_existing(tmp_path, monkeypatch):
+def test_sheet_stage_gives_every_character_candidates_main_waits_others_auto_select(tmp_path, monkeypatch):
     monkeypatch.setattr(orch_module, "project_dir", lambda pid: tmp_path / pid)
     monkeypatch.setattr(orch_module, "save_project", lambda p: None)
     monkeypatch.setattr(orch_module, "settings", SimpleNamespace(require_bible_approval=False, require_sheet_approval=True, sheet_candidates=3, max_comic_cost_usd=100.0, qa_max_retries=2))
@@ -81,7 +81,7 @@ def test_sheet_stage_gives_main_candidates_supporting_one_and_skips_existing(tmp
 
     pipeline.generate_character_sheets(project)
     assert len(main.sheet_candidates) == 3 and main.sheet_image_path is None and not main.sheet_approved  # waits for a human
-    assert len(side.sheet_candidates) == 1 and side.sheet_image_path and side.sheet_approved  # auto-selected
+    assert len(side.sheet_candidates) == 3 and side.sheet_image_path and side.sheet_approved  # same likeness promise: 3 candidates, auto-selected
     assert project.status == "sheets_ready"
 
     calls = []

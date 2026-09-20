@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.http import post_with_retry, raise_for_status
-from app.models import CharacterProfile
+from app.models import CharacterProfile, MarkerCheck
 from app.pipeline.bible import bible_checks
 from app.usage import openai_chat_record
 
@@ -63,6 +63,53 @@ SHEET_SYSTEM_PROMPT = (
     "the check text as its name; set unlisted_characters if any other character or hand is drawn, and "
     "text_in_art if any labels or words appear on the sheet."
 )
+
+
+SHEET_MARKER_SYSTEM_PROMPT = (
+    "You compare a generated black-and-white manga character SHEET (several views) with two references: PHOTOS of the "
+    "real handmade product (ground truth) and the character's written design BIBLE. For EACH listed marker answer two "
+    "separate questions: (1) does the sheet match the real product photo for this feature, and (2) does the sheet match "
+    "what the bible's words say. They can differ: the bible may be wrong about the product, or the sheet may have drawn it "
+    "differently. Compare shapes, proportions, positions and markings, never texture (ink vs yarn). Ignore any hand, "
+    "other objects or backdrop in the photo. Be literal, not generous: a feature that is smaller, larger, a different "
+    "shape or in a different place does not match. In `sheet_shows` write ONE concrete sentence describing what the sheet "
+    "actually draws for that feature, in the same style as the bible (shape, colour, relative size, position). Use the "
+    "marker text exactly as given as `marker`. Set text_in_art if any labels or words appear on the sheet, and "
+    "unlisted_characters if any other character or hand is drawn."
+)
+
+_MARKER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "markers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "marker": {"type": "string"},
+                    "matches_photo": {"type": "boolean"},
+                    "matches_bible": {"type": "boolean"},
+                    "sheet_shows": {"type": "string"},
+                    "note": {"type": "string"},
+                },
+                "required": ["marker", "matches_photo", "matches_bible", "sheet_shows", "note"],
+                "additionalProperties": False,
+            },
+        },
+        "text_in_art": {"type": "boolean"},
+        "unlisted_characters": {"type": "boolean"},
+        "summary": {"type": "string"},
+    },
+    "required": ["markers", "text_in_art", "unlisted_characters", "summary"],
+    "additionalProperties": False,
+}
+
+
+class SheetMarkerReview(BaseModel):
+    markers: list[MarkerCheck]
+    text_in_art: bool
+    unlisted_characters: bool
+    summary: str
 
 
 _SCHEMA = {
@@ -315,11 +362,11 @@ class PanelJudge:
 
         return self._submit(SYSTEM_PROMPT, content, strict_names, detail)
 
-    def _submit(self, system: str, content: list[dict], strict_names: list[str], detail: str) -> PanelReview:
+    def _call(self, system: str, content: list[dict], name: str, schema: dict, detail: str) -> dict:
         body = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
-            "response_format": {"type": "json_schema", "json_schema": {"name": "panel_review", "strict": True, "schema": _SCHEMA}},
+            "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}},
             "reasoning_effort": self.reasoning_effort,
         }
         data = self._chat(body, "qa", detail)
@@ -327,10 +374,36 @@ class PanelJudge:
         if message.get("refusal") or not message.get("content"):
             raise ValueError(f"Judge returned no review: {message.get('refusal') or data['choices'][0].get('finish_reason')}")
         try:
-            review = PanelReview.model_validate(json.loads(message["content"]))
-        except (json.JSONDecodeError, ValueError) as exc:
+            return json.loads(message["content"])
+        except json.JSONDecodeError as exc:
             raise ValueError(f"Judge returned an invalid review: {message['content'][:300]!r}") from exc
+
+    def _submit(self, system: str, content: list[dict], strict_names: list[str], detail: str) -> PanelReview:
+        raw = self._call(system, content, "panel_review", _SCHEMA, detail)
+        try:
+            review = PanelReview.model_validate(raw)
+        except ValueError as exc:
+            raise ValueError(f"Judge returned an invalid review: {str(raw)[:300]!r}") from exc
         review.strict_names = strict_names
+        return review
+
+    def review_sheet_markers(self, sheet_path: Path, character: CharacterProfile, detail: str = "") -> SheetMarkerReview:
+        """Per bible marker: does the sheet match the real photo, and does it match the bible's words?
+        This is what lets us tell whether the sheet or the bible is the one that is wrong."""
+        markers = character.bible.markers if character.bible else []
+        listing = "\n".join(f"- {m.feature}: {m.description}" for m in markers)
+        content: list[dict] = [{"type": "text", "text": f"### {character.name}\nBIBLE MARKERS (use the text before the colon as `marker`):\n{listing}"}]
+        if character.reference_image_path and Path(character.reference_image_path).exists():
+            content += [{"type": "text", "text": "REAL PRODUCT PHOTO (ground truth):"}, _image(Path(character.reference_image_path))]
+        content += [{"type": "text", "text": "\nGENERATED SHEET TO REVIEW:"}, _image(sheet_path, 2048)]
+        raw = self._call(SHEET_MARKER_SYSTEM_PROMPT, content, "sheet_marker_review", _MARKER_SCHEMA, detail or f"sheet markers {character.name}")
+        try:
+            review = SheetMarkerReview.model_validate(raw)
+        except ValueError as exc:
+            raise ValueError(f"Judge returned an invalid marker review: {str(raw)[:300]!r}") from exc
+        critical = {m.feature: m.critical for m in markers}
+        for check in review.markers:
+            check.critical = critical.get(check.marker, True)
         return review
 
     def review_sheet(self, sheet_path: Path, character: CharacterProfile, detail: str = "") -> PanelReview:

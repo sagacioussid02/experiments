@@ -38,6 +38,9 @@ def test_chat_pricing_is_exact_not_prefix():
     assert openai_chat_record("qa", "gpt-5", {"prompt_tokens": 1_000_000, "completion_tokens": 0}).cost_usd == pytest.approx(1.25)
     assert openai_chat_record("qa", "gpt-5-2025-08-07", {"prompt_tokens": 1_000_000, "completion_tokens": 0}).cost_usd == pytest.approx(1.25)
     assert openai_chat_record("qa", "gpt-5.4", {"prompt_tokens": 10, "completion_tokens": 10}).cost_usd is None  # NOT priced as gpt-5
+    # the longest name wins: mini is a fifth of the price of gpt-5, not the same
+    assert openai_chat_record("qa", "gpt-5-mini", {"prompt_tokens": 1_000_000, "completion_tokens": 0}).cost_usd == pytest.approx(0.25)
+    assert openai_chat_record("qa", "gpt-5-mini-2025-08-07", {"prompt_tokens": 0, "completion_tokens": 1_000_000}).cost_usd == pytest.approx(2.0)
 
 
 def _chars(tmp_path):
@@ -66,7 +69,7 @@ def test_review_sends_sheet_photo_and_panel_and_records_usage(tmp_path, monkeypa
     images = [part for part in body["messages"][1]["content"] if part["type"] == "image_url"]
     assert len(images) == 3  # sheet + real product photo + panel
     assert body["response_format"]["json_schema"]["strict"] is True
-    assert records[0].stage == "qa" and records[0].cost_usd == pytest.approx((4000 * 1.25 + 300 * 10) / 1e6)
+    assert records[-1].stage == "qa" and records[-1].cost_usd == pytest.approx((4000 * 1.25 + 300 * 10) / 1e6)  # the review, not the locator
 
 
 def test_invalid_or_refused_review_raises(tmp_path, monkeypatch):

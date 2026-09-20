@@ -153,20 +153,36 @@ class ScriptGenerator:
         return self.enforce_forbidden_words(parsed, characters)
 
     def enforce_forbidden_words(self, pages: list[ComicPage], characters: list[CharacterProfile]) -> list[ComicPage]:
-        """Deterministic word check against each character's bible; offending panels get one targeted
-        rewrite. Raises if a forbidden word survives, so a bad script never reaches paid image stages."""
+        """Deterministic word check against each character's bible. Offending panels get up to two targeted
+        rewrites (the second is told which words survived, e.g. a 'no teeth' that still contains 'teeth');
+        anything still offending is scrubbed by deleting the clause. It never raises: the user always gets an
+        episode, and every scrub is logged on `self.warnings`."""
+        self.warnings = []
+        survivors: list[str] = []
+        for attempt in range(2):
+            hits = find_forbidden(pages, characters)
+            if not hits:
+                return pages
+            self._rewrite(pages, hits, survivors)
+            survivors = sorted({w for _, _, w in find_forbidden(pages, characters)})
         hits = find_forbidden(pages, characters)
-        if not hits:
-            return pages
+        if hits:
+            self._scrub(pages, hits)
+        return pages
+
+    def _rewrite(self, pages: list[ComicPage], hits: list[tuple[int, int, str]], previous_survivors: list[str]) -> None:
         offending = {(pg, pn) for pg, pn, _ in hits}
         words = sorted({w for _, _, w in hits})
-        panels = {
-            (page.page_number, panel.panel_number): panel for page in pages for panel in page.panels
-        }
+        panels = {(page.page_number, panel.panel_number): panel for page in pages for panel in page.panels}
         listing = "\n".join(
             f"- page {pg} panel {pn}: {panels[(pg, pn)].scene_description}"
             + (f" | caption: {panels[(pg, pn)].caption}" if panels[(pg, pn)].caption else "")
             for pg, pn in sorted(offending)
+        )
+        retry_note = (
+            f" Your previous rewrite STILL contained: {', '.join(previous_survivors)}. Do not mention these words at all, "
+            "not even to say something is absent (write 'closed mouth', not 'no teeth')."
+            if previous_survivors else ""
         )
         started = time.perf_counter()
         response = self.client.messages.create(
@@ -175,7 +191,7 @@ class ScriptGenerator:
             system="You fix comic panel descriptions. Keep meaning, drama and framing; only change wording.",
             messages=[{"role": "user", "content": (
                 f"Rewrite these panel descriptions so they never use these words (or any form of them): {', '.join(words)}. "
-                "Convey the same emotion through eyes, brows, posture and movement instead.\n" + listing
+                "Convey the same emotion through eyes, brows, posture and movement instead." + retry_note + "\n" + listing
             )}],
             tools=[_FIX_TOOL],
             tool_choice={"type": "tool", "name": "emit_fixes"},
@@ -189,7 +205,28 @@ class ScriptGenerator:
                 panel.scene_description = fix.get("scene_description", panel.scene_description)
                 if panel.caption is not None and "caption" in fix:
                     panel.caption = fix["caption"]
-        remaining = find_forbidden(pages, characters)
-        if remaining:
-            raise ValueError(f"Script still uses forbidden words after a rewrite: {remaining}")
-        return pages
+
+    def _scrub(self, pages: list[ComicPage], hits: list[tuple[int, int, str]]) -> None:
+        """Last resort: delete the clauses that still contain a forbidden word."""
+        import re
+
+        by_panel: dict[tuple[int, int], set[str]] = {}
+        for pg, pn, word in hits:
+            by_panel.setdefault((pg, pn), set()).add(word)
+        for page in pages:
+            for panel in page.panels:
+                words = by_panel.get((page.page_number, panel.panel_number))
+                if not words:
+                    continue
+                pattern = re.compile(r"\b(" + "|".join(re.escape(w) for w in words) + r")(s|es|ed|ing)?\b", re.IGNORECASE)
+
+                def clean(text: str) -> str:
+                    clauses = re.split(r"(?<=[,;.])\s+", text)
+                    kept = [c for c in clauses if not pattern.search(c)]
+                    return " ".join(kept).strip(" ,;") or "The character reacts."
+
+                before = panel.scene_description
+                panel.scene_description = clean(panel.scene_description)
+                if panel.caption:
+                    panel.caption = clean(panel.caption) if pattern.search(panel.caption) else panel.caption
+                self.warnings.append(f"page {page.page_number} panel {panel.panel_number}: removed clause(s) with {sorted(words)} from: {before[:120]}")

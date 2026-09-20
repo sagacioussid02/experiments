@@ -55,7 +55,11 @@ if panels:
 
 log = project_dir(pid) / "qa_events.jsonl"
 if log.exists():
-    events = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    all_events = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    for e in all_events:
+        if e.get("event") == "circuit_breaker":
+            print(f"\nCIRCUIT BREAKER tripped after {e['tripped_after_panels']} panels (first-attempt pass rate {e['first_attempt_pass_rate']}); top failing: {e['top_failing_checks']}")
+    events = [e for e in all_events if "attempt" in e]
     first = [e for e in events if e["attempt"] == 1]
     print(f"\nQA log: {len(events)} attempts over {len(first)} panels; first-attempt pass rate {sum(1 for e in first if e['problem_count'] == 0)}/{len(first)}")
     fails = Counter(prob.split(":")[0] for e in events for prob in e["problems"])

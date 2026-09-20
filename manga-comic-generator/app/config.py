@@ -33,7 +33,8 @@ class Settings:
     openai_input_fidelity: str = os.environ.get("OPENAI_INPUT_FIDELITY", "low")
     openai_reference_max_side: int = int(os.environ.get("OPENAI_REFERENCE_MAX_SIDE", "1024"))
     openai_sheet_fidelity: str = os.environ.get("OPENAI_SHEET_FIDELITY", "high")
-    judge_model: str = os.environ.get("JUDGE_MODEL", "gpt-5")
+    judge_model: str = os.environ.get("JUDGE_MODEL", "gpt-5-mini")
+    sheet_judge_model: str = os.environ.get("SHEET_JUDGE_MODEL", "gpt-5")
     judge_reasoning_effort: str = os.environ.get("JUDGE_REASONING_EFFORT", "low")
     locator_model: str = os.environ.get("LOCATOR_MODEL", "gpt-5-mini")
     require_bible_approval: bool = os.environ.get("REQUIRE_BIBLE_APPROVAL", "true").lower() not in ("0", "false", "no")
@@ -41,6 +42,8 @@ class Settings:
     require_sheet_approval: bool = os.environ.get("REQUIRE_SHEET_APPROVAL", "true").lower() not in ("0", "false", "no")
     panel_qa: bool = os.environ.get("PANEL_QA", "true").lower() not in ("0", "false", "no")
     qa_max_retries: int = int(os.environ.get("QA_MAX_RETRIES", "2"))
+    qa_breaker_min_panels: int = int(os.environ.get("QA_BREAKER_MIN_PANELS", "4"))
+    qa_breaker_pass_rate: float = float(os.environ.get("QA_BREAKER_PASS_RATE", "0.5"))
     max_comic_cost_usd: float = float(os.environ.get("MAX_COMIC_COST_USD", "5.0"))
     data_dir: str = os.environ.get("DATA_DIR", "data/projects")
 

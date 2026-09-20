@@ -9,6 +9,7 @@ class BibleMarker(BaseModel):
     feature: str = Field(description="e.g. 'Nose', 'Chest patch', 'Ears'")
     description: str = Field(description="Concrete, checkable description: shape, colour, relative size, position.")
     critical: bool = Field(default=True, description="False for fine details (highlights, stitch counts): advisory only, never fails a panel.")
+    deviates_from_product: bool = Field(default=False, description="Set at sheet approval: the approved sheet draws this feature differently from the real product photo.")
 
 
 class CharacterBible(BaseModel):
@@ -19,14 +20,37 @@ class CharacterBible(BaseModel):
     markers: list[BibleMarker] = Field(default_factory=list)
     colours: dict[str, str] = Field(default_factory=dict, description="Real colours, kept for future colour episodes.")
     expression_notes: str = Field(default="", description="How expressions must be drawn (e.g. shouting = plain open oval mouth, no teeth).")
-    never: list[str] = Field(default_factory=list, description="Things this character must never have or show.")
+    never: list[str] = Field(default_factory=list, description="Things this character must never have or show (critical: any of them fails a panel).")
+    never_minor: list[str] = Field(default_factory=list, description="Things to avoid but that expressive art tends to add (eyebrows, visible fists): advisory, never fail a panel.")
     forbidden_words: list[str] = Field(default_factory=list, description="Words the script must not use when describing this character.")
     version: int = 1
     approved: bool = False
 
 
+class MarkerCheck(BaseModel):
+    """One bible marker checked against a sheet candidate, twice: against the real photo and against
+    the bible's own words. The four combinations tell us whether the sheet or the bible is wrong."""
+
+    marker: str
+    critical: bool = True
+    matches_photo: bool = True
+    matches_bible: bool = True
+    sheet_shows: str = ""
+    note: str = ""
+
+
+class CharacterConfidence(BaseModel):
+    sheet_critical_failures: int = Field(default=0, description="Critical markers where the approved sheet differs from the real photo.")
+    bible_updates: int = Field(default=0, description="Markers rewritten at approval to describe what the sheet shows (info only).")
+    first_attempt_pass_rate: Optional[float] = Field(default=None, description="Share of this character's panels that passed QA on the first draw.")
+    low: bool = False
+
+
 class SheetCandidate(BaseModel):
     path: str
+    markers: list[MarkerCheck] = Field(default_factory=list)
+    text_in_art: bool = False
+    unlisted_characters: bool = False
     problems: list[str] = Field(default_factory=list, description="Judge's findings vs the real product photo; fewer is better.")
     checked: bool = False
 
@@ -50,7 +74,10 @@ class CharacterProfile(BaseModel):
         description="Generated manga character sheet; used instead of the raw photo as the panel reference.",
     )
     sheet_candidates: list[SheetCandidate] = Field(default_factory=list)
-    sheet_approved: bool = Field(default=False, description="A human picked this sheet; it is frozen and reused.")
+    sheet_approved: bool = Field(default=False, description="This sheet is frozen and reused for every episode.")
+    approval: Optional[Literal["manual", "auto"]] = Field(default=None, description="Who approved the sheet: the owner, or the system (soft gate, no blocking).")
+    reconciliation: list[str] = Field(default_factory=list, description="Human-readable log of bible changes made to match the approved sheet.")
+    confidence: CharacterConfidence = Field(default_factory=CharacterConfidence)
     main: bool = Field(default=False, description="Gets a dedicated 'Character File' page at the front.")
     bible: Optional[CharacterBible] = None
 
@@ -119,5 +146,6 @@ class ComicProject(BaseModel):
     story: Optional[StoryArc] = None
     pages: list[ComicPage] = Field(default_factory=list)
     cover_image_path: Optional[str] = None
+    qa_breaker: Optional[dict] = Field(default=None, description="Set when the QA circuit breaker tripped during image generation.")
     usage: list[UsageRecord] = Field(default_factory=list)
     status: Literal["created", "story_ready", "script_ready", "sheets_ready", "images_ready", "composed"] = "created"

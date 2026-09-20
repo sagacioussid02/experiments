@@ -6,6 +6,7 @@ Project id defaults to the last test project."""
 import sys
 from pathlib import Path
 
+from app.pipeline.orchestrator import ComicPipeline
 from app.storage import load_project, save_project
 
 args = sys.argv[1:]
@@ -19,17 +20,24 @@ if cmd == "show":
     for c in project.characters:
         state = "approved" if c.sheet_approved else ("WAITING FOR YOUR PICK" if c.sheet_candidates else "no candidates")
         print(f"\n{c.name}{' (main)' if c.main else ''}: {state}" + (f"  -> {c.sheet_image_path}" if c.sheet_image_path else ""))
+        pipeline = ComicPipeline()
         for i, cand in enumerate(c.sheet_candidates, 1):
             verdict = "not checked" if not cand.checked else ("no problems found" if not cand.problems else f"{len(cand.problems)} problem(s)")
             print(f"  [{i}] {cand.path}   judge: {verdict}")
             for p in cand.problems:
                 print("        -", p[:210])
+            if not c.sheet_approved:
+                for line in pipeline.reconciliation_preview(c, i):
+                    print("        would update bible:", line[:200])
 elif cmd == "select":
     name, n = args[1], int(args[2])
     c = find(name)
-    c.sheet_image_path, c.sheet_approved = c.sheet_candidates[n - 1].path, True
-    save_project(project)
+    ComicPipeline().select_sheet(project, c.id, n)  # freezes the sheet AND reconciles the bible to it
     print(f"{c.name}: sheet {n} approved -> {c.sheet_image_path}")
+    for line in c.reconciliation:
+        print("  bible updated:", line[:220])
+    if c.confidence.sheet_critical_failures:
+        print(f"  note: {c.confidence.sheet_critical_failures} critical feature(s) differ from your real photo (see `show`).")
 elif cmd == "reset":
     c = find(args[1])
     c.sheet_image_path, c.sheet_candidates, c.sheet_approved = None, [], False

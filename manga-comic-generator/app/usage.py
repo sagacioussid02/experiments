@@ -35,7 +35,9 @@ def openai_chat_record(stage: str, model: str, usage: dict | None, detail: str =
     usage = usage or {}
     inp = usage.get("prompt_tokens", 0) or 0
     out = usage.get("completion_tokens", 0) or 0  # includes reasoning tokens, which are billed as output
-    price = next((v for k, v in OPENAI_CHAT_PRICES.items() if model == k or model.startswith(k + "-")), None)
+    # longest matching name wins: 'gpt-5-mini' must not be priced as 'gpt-5' (it was, until 2026-09-20)
+    matches = [k for k in OPENAI_CHAT_PRICES if model == k or model.startswith(k + "-")]
+    price = OPENAI_CHAT_PRICES[max(matches, key=len)] if matches else None
     cost = (inp * price[0] + out * price[1]) / 1e6 if price and usage else None
     return UsageRecord(stage=stage, provider="openai", model=model, detail=detail, input_tokens=inp, output_tokens=out, cost_usd=cost, seconds=seconds)
 

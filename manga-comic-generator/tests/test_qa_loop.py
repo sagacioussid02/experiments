@@ -16,7 +16,7 @@ from app.pipeline.orchestrator import ComicPipeline
 
 
 def _settings(**kw):
-    base = dict(require_bible_approval=False, require_sheet_approval=True, sheet_candidates=3, max_comic_cost_usd=100.0, qa_max_retries=2)
+    base = dict(require_bible_approval=False, require_sheet_approval=True, sheet_candidates=3, max_comic_cost_usd=100.0, qa_max_retries=2, qa_breaker_min_panels=99, qa_breaker_pass_rate=0.5)
     return SimpleNamespace(**{**base, **kw})
 
 
@@ -155,7 +155,8 @@ def test_sheet_judge_scores_candidates_and_supporting_is_auto_picked(tmp_path, m
     p = _setup(tmp_path, monkeypatch)
     p.image_generator = MockImageGenerator()
     judge = MagicMock()
-    judge.review_sheet.side_effect = [SimpleNamespace(problems=lambda: ["heart too neat", "nose small"]), SimpleNamespace(problems=lambda: ["heart too neat"]), SimpleNamespace(problems=lambda: []), ValueError("bad judge")]
+    judge.review_sheet.side_effect = [SimpleNamespace(problems=lambda: ["heart too neat", "nose small"]), SimpleNamespace(problems=lambda: ["heart too neat"]), SimpleNamespace(problems=lambda: []),
+                                      ValueError("bad judge"), ValueError("bad judge"), ValueError("bad judge")]
     p.judge = judge
     photo = tmp_path / "photo.png"
     Image.new("RGB", (100, 100)).save(photo)

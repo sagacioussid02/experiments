@@ -196,11 +196,13 @@ class OpenAIImageGenerator(ImageGenerator):
         model: str | None = None,
         input_fidelity: str | None = None,
         reference_max_side: int | None = None,
+        quality: str | None = None,
     ):
         self.api_key = settings.openai_api_key if api_key is None else api_key
         self.model = settings.openai_image_model if model is None else model
         self.input_fidelity = settings.openai_input_fidelity if input_fidelity is None else input_fidelity
         self.reference_max_side = settings.openai_reference_max_side if reference_max_side is None else reference_max_side
+        self.quality = settings.openai_image_quality if quality is None else quality
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is not set")
 
@@ -235,7 +237,7 @@ class OpenAIImageGenerator(ImageGenerator):
             response = post_with_retry(
                 self.EDIT_URL,
                 headers=headers,
-                data={"model": self.model, "prompt": prompt, "size": size, "quality": settings.openai_image_quality, "input_fidelity": fidelity},
+                data={"model": self.model, "prompt": prompt, "size": size, "quality": self.quality, "input_fidelity": fidelity},
                 files=files,
                 timeout=300,
             )
@@ -243,7 +245,7 @@ class OpenAIImageGenerator(ImageGenerator):
             response = post_with_retry(
                 self.GENERATE_URL,
                 headers=headers,
-                json={"model": self.model, "prompt": prompt, "size": size, "quality": settings.openai_image_quality},
+                json={"model": self.model, "prompt": prompt, "size": size, "quality": self.quality},
                 timeout=300,
             )
         raise_for_status(response)

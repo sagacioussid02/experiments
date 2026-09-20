@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -41,6 +42,7 @@ class ComicPipeline:
     """
 
     judge: PanelJudge | None = None
+    sheet_judge: PanelJudge | None = None  # stronger model for the few sheet reviews; falls back to `judge`
 
     def __init__(self, image_generator: ImageGenerator | None = None, judge: PanelJudge | None = None):
         self.story_generator = StoryGenerator()
@@ -50,6 +52,7 @@ class ComicPipeline:
         # The judge only makes sense for a real image backend that has an OpenAI key.
         if judge is None and settings.panel_qa and settings.image_backend == "openai" and settings.openai_api_key:
             judge = PanelJudge()
+            self.sheet_judge = PanelJudge(model=settings.sheet_judge_model)
         self.judge = judge
 
     def extract_bibles(self, project: ComicProject) -> ComicProject:
@@ -119,52 +122,136 @@ class ComicPipeline:
         if pending:
             raise ValueError(f"Pick a character sheet for {', '.join(pending)} first (see the candidates, then select one).")
 
+    @staticmethod
+    def _candidate_problems(candidate: SheetCandidate) -> list[str]:
+        """Human-readable findings for a candidate (shown in the CLI/UI)."""
+        out = []
+        if candidate.text_in_art:
+            out.append("text drawn on the sheet")
+        if candidate.unlisted_characters:
+            out.append("another character or hand drawn on the sheet")
+        for m in candidate.markers:
+            tag = "" if m.critical else "(minor) "
+            if not m.matches_photo:
+                out.append(f"{tag}{m.marker}: differs from the real photo -- {m.note or m.sheet_shows}")
+            if not m.matches_bible:
+                out.append(f"{tag}{m.marker}: differs from the bible -- sheet shows: {m.sheet_shows}")
+        return out
+
+    @staticmethod
+    def _candidate_score(candidate: SheetCandidate) -> tuple:
+        """Lower is better: unusable flags first, then critical mismatches with the PHOTO (product
+        fidelity), then critical mismatches with the bible, then any mismatch."""
+        critical = [m for m in candidate.markers if m.critical]
+        return (
+            int(candidate.text_in_art or candidate.unlisted_characters),
+            sum(not m.matches_photo for m in critical),
+            sum(not m.matches_bible for m in critical),
+            sum(not (m.matches_photo and m.matches_bible) for m in candidate.markers),
+            len(candidate.problems) if not candidate.markers else 0,
+        )
+
+    def _score_candidate(self, character, candidate: SheetCandidate) -> None:
+        photo_ok = character.reference_image_path and Path(character.reference_image_path).exists()
+        judge = self.sheet_judge or self.judge
+        if not (judge and photo_ok):
+            return
+        try:
+            if character.bible and character.bible.markers:
+                review = judge.review_sheet_markers(Path(candidate.path), character)
+                candidate.markers = review.markers
+                candidate.text_in_art, candidate.unlisted_characters = review.text_in_art, review.unlisted_characters
+                candidate.problems = self._candidate_problems(candidate)
+            else:  # no bible: fall back to the photo-only check
+                candidate.problems = judge.review_sheet(Path(candidate.path), character).problems()
+            candidate.checked = True
+        except (ValueError, requests.RequestException) as exc:
+            candidate.problems = [f"judge error: {exc}"]
+
+    def reconciliation_preview(self, character, index: int) -> list[str]:
+        """What approving candidate `index` (1-based) would change in the bible."""
+        candidate = character.sheet_candidates[index - 1]
+        by_feature = {m.feature: m for m in (character.bible.markers if character.bible else [])}
+        return [
+            f"{m.marker}: bible says '{by_feature[m.marker].description[:90]}' -> sheet shows '{m.sheet_shows[:90]}'"
+            for m in candidate.markers
+            if not m.matches_bible and m.marker in by_feature and m.sheet_shows.strip()
+        ]
+
+    def _apply_sheet(self, project: ComicProject, character, candidate: SheetCandidate, approval: str) -> None:
+        """Freeze a candidate as the character's sheet and RECONCILE the bible to it: where the sheet
+        differs from the bible's words, the bible is rewritten to describe the sheet (the sheet is what panels
+        copy, so panels must be judged against it). Differences from the real photo are kept as
+        `deviates_from_product` and counted in the confidence signals, not hidden."""
+        character.sheet_image_path, character.sheet_approved, character.approval = candidate.path, True, approval
+        character.reconciliation = []
+        updates = 0
+        if character.bible:
+            by_feature = {m.feature: m for m in character.bible.markers}
+            for check in candidate.markers:
+                marker = by_feature.get(check.marker)
+                if not marker:
+                    continue
+                marker.deviates_from_product = not check.matches_photo
+                if not check.matches_bible and check.sheet_shows.strip() and not re.match(r"\s*(no|none|not|without|absent)\b", check.sheet_shows, re.IGNORECASE):
+                    # (never rewrite a marker into a negation: 'no mouth lines' would then fail any panel that draws
+                    # what the real product has)
+                    character.reconciliation.append(f"{check.marker}: '{marker.description}' -> '{check.sheet_shows}'")
+                    marker.description = check.sheet_shows
+                    updates += 1
+            if updates:
+                character.bible.version += 1
+        character.confidence.sheet_critical_failures = sum(1 for m in candidate.markers if m.critical and not m.matches_photo)
+        character.confidence.bible_updates = updates
+        save_project(project)
+
+    def auto_select_sheet(self, project: ComicProject, character) -> None:
+        """Soft gate (never block the user): choose the best-scoring candidate and reconcile automatically."""
+        if character.sheet_candidates:
+            best = min(character.sheet_candidates, key=self._candidate_score)
+            self._apply_sheet(project, character, best, "auto")
+
     def generate_character_sheets(self, project: ComicProject) -> ComicProject:
-        """Character sheets made from the product photo. The main character gets several candidates,
-        each checked by the judge against the real photo, and a human picks one (it is then frozen and
-        reused); supporting characters get one, auto-selected. Existing sheets are kept, so re-running
-        is safe."""
+        """Character sheets made from the product photo. Every character gets candidates (main: several,
+        others: one, per settings), each checked against the photo AND the bible. With
+        REQUIRE_SHEET_APPROVAL the main character waits for the owner's pick; otherwise (the public-product
+        soft gate) the best candidate is chosen automatically. Existing sheets are kept, so re-running is safe."""
         self._require_approved_bibles(project)
         self.image_generator.usage_sink = project.usage.append
-        if self.judge:
-            self.judge.usage_sink = project.usage.append
+        for judge in (self.judge, self.sheet_judge):
+            if judge:
+                judge.usage_sink = project.usage.append
         sheets_dir = project_dir(project.id) / "characters"
         main_ids = {c.id for c in main_characters(project)}
         for character in project.characters:
             if character.sheet_image_path and Path(character.sheet_image_path).exists():
                 continue
             if character.id in main_ids and character.sheet_candidates and all(Path(c.path).exists() for c in character.sheet_candidates):
-                continue  # candidates exist; waiting for a human pick
+                if not settings.require_sheet_approval and not character.sheet_approved:
+                    self.auto_select_sheet(project, character)
+                continue  # otherwise: candidates exist, waiting for the owner's pick
             character.sheet_candidates = []
-            for i in range(settings.sheet_candidates if character.id in main_ids else 1):
+            for i in range(settings.sheet_candidates):  # every user character gets the same likeness promise
                 self._check_budget(project, "sheets")
                 result = self.image_generator.generate_character_sheet(character, sheets_dir / f"sheet_{character.id}_c{i + 1}.png")
                 if not result:
                     break  # this backend can't make sheets; panels fall back to the photo
                 candidate = SheetCandidate(path=str(result))
-                if self.judge and character.reference_image_path and Path(character.reference_image_path).exists():
-                    try:
-                        candidate.problems = self.judge.review_sheet(Path(result), character).problems()
-                        candidate.checked = True
-                    except (ValueError, requests.RequestException) as exc:
-                        candidate.problems = [f"judge error: {exc}"]
+                self._score_candidate(character, candidate)
                 character.sheet_candidates.append(candidate)
                 save_project(project)
-            if character.id not in main_ids and character.sheet_candidates:
-                best = min(character.sheet_candidates, key=lambda c: len(c.problems))
-                character.sheet_image_path, character.sheet_approved = best.path, True
+            if character.sheet_candidates and (character.id not in main_ids or not settings.require_sheet_approval):
+                self.auto_select_sheet(project, character)
         project.status = "sheets_ready"
         save_project(project)
         return project
 
     def select_sheet(self, project: ComicProject, character_id: str, index: int) -> ComicProject:
-        """Freeze candidate `index` (1-based) as the character's approved sheet."""
+        """The owner picks candidate `index` (1-based); the bible is reconciled to it (see reconciliation_preview)."""
         character = next((c for c in project.characters if c.id == character_id), None)
         if not character or not (1 <= index <= len(character.sheet_candidates)):
             raise ValueError(f"No candidate {index} for character {character_id}")
-        character.sheet_image_path = character.sheet_candidates[index - 1].path
-        character.sheet_approved = True
-        save_project(project)
+        self._apply_sheet(project, character, character.sheet_candidates[index - 1], "manual")
         return project
 
     def reset_sheets(self, project: ComicProject, character_id: str) -> ComicProject:
@@ -173,6 +260,7 @@ class ComicPipeline:
         if not character:
             raise ValueError(f"No such character {character_id}")
         character.sheet_image_path, character.sheet_candidates, character.sheet_approved = None, [], False
+        character.approval, character.reconciliation = None, []
         save_project(project)
         return project
 
@@ -211,7 +299,7 @@ class ComicPipeline:
         with (directory / "qa_events.jsonl").open("a") as handle:
             handle.write(json.dumps(event) + "\n")
 
-    def _draw_panel(self, project: ComicProject, panel, output_path: Path) -> None:
+    def _draw_panel(self, project: ComicProject, panel, output_path: Path, degraded: bool = False) -> None:
         """Draw one panel; if a judge is available, check it and redraw with the judge's reasons (up to
         QA_MAX_RETRIES extra tries for panels with the main character, 1 otherwise). The best attempt wins;
         a panel that never passes is kept but flagged (qa_passed False) for human review."""
@@ -224,7 +312,7 @@ class ComicPipeline:
             self.image_generator.generate_panel(panel, project.characters, output_path)
             return
         self.judge.usage_sink = project.usage.append
-        retries = settings.qa_max_retries if strict else 1
+        retries = 0 if degraded else (settings.qa_max_retries if strict else 1)  # degraded = circuit breaker tripped
         best = None  # (problem_count, path, problems)
         panel.retry_hint = ""
         attempts = 0
@@ -280,6 +368,7 @@ class ComicPipeline:
             save_project(project)
         self.image_generator.usage_sink = project.usage.append
         images_dir = project_dir(project.id) / "panels"
+        judged = []  # first-attempt outcomes in this run, for the circuit breaker
         for page in project.pages:
             for panel in page.panels:
                 have = panel.image_path and Path(panel.image_path).exists()
@@ -287,12 +376,45 @@ class ComicPipeline:
                 if have and not redo:
                     continue
                 output_path = images_dir / f"page{page.page_number}_panel{panel.panel_number}.png"
-                self._draw_panel(project, panel, output_path)
+                self._draw_panel(project, panel, output_path, degraded=bool(project.qa_breaker))
                 panel.image_path = str(output_path)
+                if self.judge and panel.qa_passed is not None:
+                    judged.append(panel.qa_attempts == 1 and panel.qa_passed)
+                    self._maybe_trip_breaker(project, judged)
                 save_project(project)
+        for character in project.characters:
+            self._update_confidence(project, character)
         project.status = "images_ready"
         save_project(project)
         return project
+
+    def _maybe_trip_breaker(self, project: ComicProject, judged: list[bool]) -> None:
+        """Graceful circuit breaker: if too few panels pass on the first draw, the spec is probably
+        unachievable, so stop paying for retries. The episode still finishes (best attempts, flagged) and
+        the conflicting checks are recorded so a human or the reconciler can fix the cause."""
+        if project.qa_breaker or len(judged) < settings.qa_breaker_min_panels:
+            return
+        rate = sum(judged) / len(judged)
+        if rate >= settings.qa_breaker_pass_rate:
+            return
+        events = []
+        log = project_dir(project.id) / "qa_events.jsonl"
+        if log.exists():
+            events = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+        from collections import Counter
+
+        top = Counter(p.split(":")[0] for e in events for p in e.get("problems", []))
+        project.qa_breaker = {"tripped_after_panels": len(judged), "first_attempt_pass_rate": round(rate, 2), "top_failing_checks": dict(top.most_common(5))}
+        self._log_event(project, {"event": "circuit_breaker", **project.qa_breaker})
+
+    def _update_confidence(self, project: ComicProject, character) -> None:
+        """Signals behind the onboarding guarantee (all recorded, none hidden): critical differences from the
+        real photo, bible rewrites at approval, and how often this character's panels pass on the first draw."""
+        panels = [p for pg in project.pages for p in pg.panels if character.name in p.characters and p.qa_passed is not None]
+        if panels:
+            character.confidence.first_attempt_pass_rate = round(sum(1 for p in panels if p.qa_attempts == 1 and p.qa_passed) / len(panels), 2)
+        rate = character.confidence.first_attempt_pass_rate
+        character.confidence.low = bool(character.confidence.sheet_critical_failures > 0 and rate is not None and rate < 0.6)
 
     def qa_report(self, project: ComicProject) -> dict:
         panels = [(pg.page_number, p) for pg in project.pages for p in pg.panels]
@@ -303,6 +425,8 @@ class ComicPipeline:
             "flagged_for_review": flagged,
             "unchecked": sum(1 for _, p in panels if p.qa_passed is None),
             "extra_attempts": sum(max(0, p.qa_attempts - 1) for _, p in panels),
+            "circuit_breaker": project.qa_breaker,
+            "characters": {c.name: {"approval": c.approval, **c.confidence.model_dump()} for c in project.characters},
         }
 
     def compose(self, project: ComicProject) -> Path:

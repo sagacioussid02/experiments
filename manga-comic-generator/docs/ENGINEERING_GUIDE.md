@@ -32,6 +32,7 @@ Models (the "agents"): Claude Sonnet 5 writes story/script/bible; `gpt-image-1` 
 | run2 | generated sheets, low fidelity | $0.891 | 10 | $0.063 | + $0.259 one-off sheets; story/script reused |
 | run3 | + prompt fixes, cover, bibles | $0.868 | 10 | $0.064 | sheets 0.129, cover 0.071, bible 0.031 |
 | run4 | + sheet candidates, judge, retries | $2.877 | 25 | $0.068 | QA $0.585, sheets $0.527, 3/10 panels pass |
+| run5 (Phase 0) | + reconciliation, breaker, mini judge | $1.632 | 13 | $0.067 | episode $1.02 excl. one-off sheets; 4/10 pass; QA overhead 40% |
 
 All runs plus the judge experiments total about **$9.9** by the usage logs (experiments ~$3.6 of that).
 
@@ -42,8 +43,9 @@ All runs plus the judge experiments total about **$9.9** by the usage logs (expe
 | Panel draw (medium quality) | $0.068 | 21.1s / 25.1s | ~800-1,500 in, 1,056 or 1,584 out |
 | Sheet (high fidelity, one-off) | ~$0.13 | not measured | ~7,000 in, ~1,570 out |
 | Cover | $0.076 | not measured | ~1,800 in, 1,584 out |
-| Judge review (gpt-5, low) | $0.021 | 26.4s | ~2,600 in, ~1,550 out (reasoning) |
-| Head locator (gpt-5-mini) | $0.002 | 1.5s | ~46 out |
+| Panel review (gpt-5-mini, low; default since 2026-09-20) | $0.004 | 9.5s | ~3,000 in, ~950 out |
+| Sheet review (gpt-5, low, per candidate) | $0.021 | ~26s | ~2,600 in, ~1,550 out |
+| Head locator (gpt-5-mini) | $0.0004 | 1.5s | ~46 out |
 | Bible extraction (Claude) | ~$0.015 | not measured | ~2,300 in, ~1,050 out |
 | Story + script (Claude) | ~$0.036 | not measured | ~3,100 in, ~3,000 out |
 
@@ -138,3 +140,16 @@ Do #1 first because #2-#4 all reduce the price of work that #1 might remove enti
 - Two characters, both plush toys. Nothing here says how it behaves on other products.
 - Latency includes rate-limit waits and retries; sheet, cover and Claude latency were not recorded before run4.
 - "Consistency" is judged by a model plus our eyes; there is no automated likeness metric against the real product.
+
+## 9. Phase 0 results (2026-09-20): what changed and what we learned
+
+- **Cost:** episode cost fell from $2.35 to $1.02 (excluding one-off sheets) mainly through the cheaper panel judge
+  (L22), the graceful circuit breaker and the no-progress early stop (L13). Redraw spend fell from $0.88 to $0.20.
+- **Speed:** panel review is now 9.5 s (was 26 s), faster than a 20.7 s draw.
+- **Verified levers:** low image quality cuts a draw by 64% (272/408 output tokens) but drifts on the nose and heart
+  patch: draft tier only (L18). Square canvases at low were worse (L17).
+- **A bug in our own measurement** (mini priced as gpt-5, 5x) was found because a cheaper model looked more expensive (L25).
+- **Quality target not met:** first-attempt pass rate was 30% against a 60% target. Relaxing the never-list only reached
+  50% (what-if), because what remains is genuine drift (nose, heart side, sleepy eyes) (L29, L30).
+- **New self-correction loops added:** sheet<->bible reconciliation (L26), graceful circuit breaker, script scrub (L28).
+  Still no learning across runs; the confidence signals and QA log are the data a future learner would use.

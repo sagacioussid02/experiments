@@ -105,12 +105,21 @@ def test_script_with_forbidden_word_is_rewritten_once(tmp_path):
     assert len(records) == 2
 
 
-def test_script_that_keeps_forbidden_word_after_rewrite_raises():
-    client = _script_client("Bruno shows fangs.", "Bruno bares his fangs anyway.")
+def test_script_that_keeps_a_forbidden_word_is_retried_then_scrubbed_never_blocked():
+    def tool(payload):
+        return SimpleNamespace(content=[SimpleNamespace(type="tool_use", input=payload)], usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+
+    first = tool({"pages": [{"page_number": 1, "panels": [{"panel_number": 1, "characters": ["Bruno"], "scene_description": "Bruno growls, showing fangs. He stands tall.", "camera_angle": "close-up"}]}]})
+    stubborn = tool({"fixes": [{"page_number": 1, "panel_number": 1, "scene_description": "Bruno growls, no fangs at all. He stands tall."}]})
+    client = MagicMock()
+    client.messages.create.side_effect = [first, stubborn, stubborn]  # story call, rewrite 1, rewrite 2 (still says 'fangs')
     gen = ScriptGenerator(client=client, model="claude-sonnet-5")
     story = StoryArc(title="t", genre="g", logline="l", synopsis="s", chapters=["a"])
-    with pytest.raises(ValueError, match="forbidden words"):
-        gen.generate(story, [_bruno()])
+    pages = gen.generate(story, [_bruno()])          # does not raise
+    text = pages[0].panels[0].scene_description
+    assert "fang" not in text.lower() and "stands tall" in text          # the offending clause was cut, the rest kept
+    assert client.messages.create.call_count == 3 and "fangs" in client.messages.create.call_args_list[2].kwargs["messages"][0]["content"].split("STILL contained")[1]
+    assert gen.warnings and "removed clause" in gen.warnings[0]
 
 
 def test_extractor_returns_validated_bible_and_records_usage(tmp_path):

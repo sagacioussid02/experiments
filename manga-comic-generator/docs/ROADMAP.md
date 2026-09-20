@@ -63,6 +63,11 @@ cheap and consistent.
 - Test cheaper levers on the labelled set: panel quality low, square canvases, minimal-effort or mini judge (L17, L18, L22).
 - **Exit:** a fresh 10-panel episode costs <= ~$1.50 including QA, first-attempt pass rate >= 60%, no unflagged text or
   extra characters, judged on the fixed 30-panel set plus the new episode.
+- **Status 2026-09-20:** reconciliation, graceful breaker, cheaper judge and lever tests are DONE. Measured on a fresh episode:
+  cost **$1.02 (met)**, no unflagged text or extra characters **(met)**, first-attempt pass **30% (not met)**. A what-if with a relaxed
+  never-list reached 50%. What remains is genuine generation drift (nose, heart side, sleepy eyes), see ledger L29 and L30.
+  Left to do: the owner's OK to split Bruno's never-list, make heart-patch *side* advisory, and apply strict checks to
+  every paid character (needs the retry-cost measurement in Phase 1). Ledger: L22-L30.
 
 ### Phase 1: character library and onboarding (request 1)
 - **Self-serve by design:** the character's *owner* runs onboarding themselves, so it must be an automated pipeline with
@@ -157,23 +162,23 @@ cheap and consistent.
 Measured: story+script $0.036, cover $0.076, panel draw $0.068, judge review + locator ~$0.023, one-off per character
 ~$0.50 (bible + 3 sheet candidates). With `r` = average extra attempts per panel and N panels:
 
-`episode cost = 0.112 + N x (0.068 + 0.023) x (1 + r)`
+`episode cost = 0.112 + N x (0.068 + 0.005) x (1 + r)`   (review now ~$0.005 with the mini judge)
 
 | r (avg extra attempts) | 10-panel episode | Note |
 |---|---|---|
-| 0 | ~$1.02 | everything passes first time (best case) |
-| 0.5 | ~$1.48 | Phase 0 target |
-| 1.5 | ~$2.39 | roughly run4 ($2.35) |
+| 0 | ~$0.84 | everything passes first time (best case) |
+| 0.3 | ~$1.06 | Phase 0 measured: $1.02 |
+| 1.5 | ~$1.94 | run4 was $2.35 with the old, costlier judge |
 
 **With the chosen default (3 story pages, ~4 panels per page = ~12 panels):**
 
 | r | 12-panel episode | + onboarding one main character (~$0.50) = one free-trial user |
 |---|---|---|
-| 0 | ~$1.20 | ~$1.70 |
-| 0.5 | ~$1.75 | ~$2.25 |
+| 0 | ~$0.99 | ~$1.46 |
+| 0.5 | ~$1.43 | ~$1.90 |
 
-*Illustration:* if 5% of trial users convert, each paying customer has already cost ~$34-45 in trials. That is why the
-trial needs a draft tier (low quality, capped retries; ~a third of the cost, estimate unverified) and hard limits.
+*Illustration:* if 5% of trial users convert, each paying customer has already cost ~$29-38 in trials. That is why the
+trial needs a draft tier (low quality: a draw costs $0.024 instead of $0.068, measured; a 12-panel trial episode is ~$0.5 plus ~$0.47 onboarding) and hard limits.
 The PDF also gains a cover, and the character file and product pages should appear only in a character's first episode.
 
 **Extra character SKU (illustrative):** onboarding cost is ~$0.47 (bible ~$0.015, 3 sheet candidates ~$0.39, their reviews ~$0.06)
