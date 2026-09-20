@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from anthropic import Anthropic
 
 from app.config import settings
@@ -49,6 +51,7 @@ class StoryGenerator:
         theme_line = theme or "No theme given -- infer a genre that best fits the characters' backstories."
         user_prompt = f"Cast:\n{cast}\n\nTheme/genre hint: {theme_line}\n\nInvent the story arc."
 
+        started = time.perf_counter()
         response = self.client.messages.create(
             model=self.model,
             max_tokens=1500,
@@ -58,6 +61,6 @@ class StoryGenerator:
             tool_choice={"type": "tool", "name": "emit_story_arc"},
         )
         if self.usage_sink and getattr(response, "usage", None):
-            self.usage_sink(anthropic_record("story", self.model, response.usage))
+            self.usage_sink(anthropic_record("story", self.model, response.usage, seconds=time.perf_counter() - started))
         tool_use = next(block for block in response.content if block.type == "tool_use")
         return StoryArc.model_validate(tool_use.input)

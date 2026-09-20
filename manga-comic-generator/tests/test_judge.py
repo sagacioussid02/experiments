@@ -1,3 +1,5 @@
+import requests
+import time
 import json
 from unittest.mock import MagicMock
 
@@ -52,7 +54,7 @@ def test_review_sends_sheet_photo_and_panel_and_records_usage(tmp_path, monkeypa
     response = MagicMock()
     response.json.return_value = {"choices": [{"message": {"content": json.dumps(payload)}}], "usage": {"prompt_tokens": 4000, "completion_tokens": 300}}
     post = MagicMock(return_value=response)
-    monkeypatch.setattr(judge_module.requests, "post", post)
+    monkeypatch.setattr(requests, "post", post)
     judge = PanelJudge(api_key="k", model="gpt-5", reasoning_effort="low")
     records = []
     judge.usage_sink = records.append
@@ -72,7 +74,7 @@ def test_invalid_or_refused_review_raises(tmp_path, monkeypatch):
     Image.new("RGB", (10, 10)).save(panel)
     response = MagicMock()
     response.json.return_value = {"choices": [{"message": {"content": "not json"}}], "usage": {}}
-    monkeypatch.setattr(judge_module.requests, "post", MagicMock(return_value=response))
+    monkeypatch.setattr(requests, "post", MagicMock(return_value=response))
     with pytest.raises(ValueError, match="invalid review"):
         PanelJudge(api_key="k").review(panel, _chars(tmp_path), ["Bruno"])
     response.json.return_value = {"choices": [{"message": {"content": None, "refusal": "no"}, "finish_reason": "stop"}]}
@@ -83,10 +85,10 @@ def test_invalid_or_refused_review_raises(tmp_path, monkeypatch):
 def test_transient_ssl_error_is_retried_then_succeeds(monkeypatch):
     import requests
 
-    monkeypatch.setattr(judge_module.time, "sleep", lambda s: None)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
     ok = MagicMock()
     calls = MagicMock(side_effect=[requests.exceptions.SSLError("bad record mac"), ok])
-    monkeypatch.setattr(judge_module.requests, "post", calls)
+    monkeypatch.setattr(requests, "post", calls)
     assert PanelJudge(api_key="k")._post({}) is ok
     assert calls.call_count == 2
 
@@ -94,8 +96,8 @@ def test_transient_ssl_error_is_retried_then_succeeds(monkeypatch):
 def test_persistent_connection_error_is_raised(monkeypatch):
     import requests
 
-    monkeypatch.setattr(judge_module.time, "sleep", lambda s: None)
-    monkeypatch.setattr(judge_module.requests, "post", MagicMock(side_effect=requests.exceptions.ConnectionError("down")))
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.setattr(requests, "post", MagicMock(side_effect=requests.exceptions.ConnectionError("down")))
     with pytest.raises(requests.exceptions.ConnectionError):
         PanelJudge(api_key="k")._post({})
 
@@ -111,7 +113,7 @@ def test_prompt_tells_judge_expression_may_vary_and_default_checks_are_design_on
     response = MagicMock()
     response.json.return_value = {"choices": [{"message": {"content": json.dumps(payload)}}], "usage": {}}
     post = MagicMock(return_value=response)
-    monkeypatch.setattr(judge_module.requests, "post", post)
+    monkeypatch.setattr(requests, "post", post)
     PanelJudge(api_key="k").review(panel, _chars(tmp_path), ["Bruno"])
     first_text = post.call_args.kwargs["json"]["messages"][1]["content"][0]["text"]
     assert first_text.startswith("ALLOWED TO VARY")
@@ -130,14 +132,14 @@ def test_locator_returns_normalised_box_or_none(tmp_path, monkeypatch):
     panel = tmp_path / "p.png"
     Image.new("RGB", (400, 300)).save(panel)
     char = _chars(tmp_path)[0]
-    monkeypatch.setattr(judge_module.requests, "post", MagicMock(return_value=_resp({"visible": True, "x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.6})))
+    monkeypatch.setattr(requests, "post", MagicMock(return_value=_resp({"visible": True, "x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.6})))
     judge = PanelJudge(api_key="k")
     assert judge.locate_head(panel, char) == (0.1, 0.2, 0.5, 0.6)
     assert judge.locate_head(panel, char) == (0.1, 0.2, 0.5, 0.6)  # second call served from the cache
-    assert judge_module.requests.post.call_count == 1
-    monkeypatch.setattr(judge_module.requests, "post", MagicMock(return_value=_resp({"visible": False, "x0": 0, "y0": 0, "x1": 0, "y1": 0})))
+    assert requests.post.call_count == 1
+    monkeypatch.setattr(requests, "post", MagicMock(return_value=_resp({"visible": False, "x0": 0, "y0": 0, "x1": 0, "y1": 0})))
     assert PanelJudge(api_key="k").locate_head(panel, char) is None
-    monkeypatch.setattr(judge_module.requests, "post", MagicMock(return_value=_resp({"visible": True, "x0": 0.6, "y0": 0.2, "x1": 0.5, "y1": 0.6})))
+    monkeypatch.setattr(requests, "post", MagicMock(return_value=_resp({"visible": True, "x0": 0.6, "y0": 0.2, "x1": 0.5, "y1": 0.6})))
     assert PanelJudge(api_key="k").locate_head(panel, char) is None  # inverted box rejected
 
 
@@ -151,7 +153,7 @@ def test_review_adds_face_crop_for_strict_characters_only_and_can_be_disabled(tm
         return _resp(box if json["response_format"]["json_schema"]["name"] == "head_box" else _EMPTY_REVIEW)
 
     post = MagicMock(side_effect=fake_post)
-    monkeypatch.setattr(judge_module.requests, "post", post)
+    monkeypatch.setattr(requests, "post", post)
     PanelJudge(api_key="k").review(panel, chars, ["Bruno"])
     review_body = post.call_args_list[-1].kwargs["json"]
     images = [p for p in review_body["messages"][1]["content"] if p["type"] == "image_url"]

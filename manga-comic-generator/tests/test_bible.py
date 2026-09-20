@@ -1,3 +1,4 @@
+import requests
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -58,7 +59,7 @@ def test_judge_uses_bible_checklist_by_default(tmp_path, monkeypatch):
     response = MagicMock()
     response.json.return_value = {"choices": [{"message": {"content": json.dumps({"characters": [], "unlisted_characters": False, "text_in_art": False, "summary": ""})}}], "usage": {}}
     post = MagicMock(return_value=response)
-    monkeypatch.setattr(judge_module.requests, "post", post)
+    monkeypatch.setattr(requests, "post", post)
     PanelJudge(api_key="k", face_crops=False).review(panel, [_bruno()], ["Bruno"])
     text = " ".join(p["text"] for p in post.call_args.kwargs["json"]["messages"][1]["content"] if p["type"] == "text")
     assert "large black oval" in text and DEFAULT_CHECKS[0] not in text

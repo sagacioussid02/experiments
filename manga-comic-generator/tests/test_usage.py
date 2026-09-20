@@ -54,7 +54,7 @@ def _project():
 def test_cost_cap_stops_image_generation_and_rerun_resumes(tmp_path, monkeypatch):
     monkeypatch.setattr(orch_module, "project_dir", lambda pid: tmp_path / pid)
     monkeypatch.setattr(orch_module, "save_project", lambda p: None)
-    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(max_comic_cost_usd=15.0))
+    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(max_comic_cost_usd=15.0, require_sheet_approval=False, qa_max_retries=2, sheet_candidates=3))
     fake = _FakeImages()
     pipeline = ComicPipeline.__new__(ComicPipeline)
     pipeline.image_generator = fake
@@ -65,7 +65,15 @@ def test_cost_cap_stops_image_generation_and_rerun_resumes(tmp_path, monkeypatch
     assert fake.calls == 2  # $10, $20 >= $15 -> third panel refused
     assert project.usage and summarize(project.usage)["total_cost_usd"] == 20.0
 
-    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(max_comic_cost_usd=100.0))
+    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(max_comic_cost_usd=100.0, require_sheet_approval=False, qa_max_retries=2, sheet_candidates=3))
     pipeline.generate_images(project)
     assert fake.calls == 3  # only the missing panel was generated
     assert project.status == "images_ready"
+
+
+def test_call_latency_is_recorded_on_usage_records():
+    from app.usage import openai_chat_record
+
+    assert anthropic_record("story", "claude-sonnet-5", SimpleNamespace(input_tokens=1, output_tokens=1), seconds=2.5).seconds == 2.5
+    assert openai_image_record("images", "gpt-image-1", {"input_tokens": 1, "output_tokens": 1}, seconds=41.0).seconds == 41.0
+    assert openai_chat_record("qa", "gpt-5", {"prompt_tokens": 1, "completion_tokens": 1}, seconds=9.0).seconds == 9.0

@@ -6,11 +6,11 @@ import json
 import time
 from pathlib import Path
 
-import requests
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 from app.config import settings
+from app.http import post_with_retry, raise_for_status
 from app.models import CharacterProfile
 from app.pipeline.bible import bible_checks
 from app.usage import openai_chat_record
@@ -18,6 +18,8 @@ from app.usage import openai_chat_record
 # Fixed DESIGN features only. Expression and pose are allowed to vary (see ALLOWED_TO_VARY), so a
 # happy or sleepy face is not a failure. Character-specific, measurable versions of these come from
 # the character bible; these are the generic fallbacks.
+MINOR_PREFIX = "MINOR: "
+
 DEFAULT_CHECKS = [
     "Eye design: same shape, size, colour and spacing as the reference (ignore expression: lids, brows, gaze)",
     "Nose/muzzle/trunk: same shape, colour and relative size as the reference at this angle -- not smaller, pointier or larger",
@@ -44,8 +46,24 @@ SYSTEM_PROMPT = (
     "different place, or missing/added compared with the reference sheet, that check fails; do not give the "
     "benefit of the doubt. But expression and pose are supposed to change from panel to panel and must "
     "never cause a failure. Answer every listed check for every listed character, using the check text "
-    "as its name."
+    "as its name. Checks whose text starts with 'MINOR:' are fine details: still answer them honestly, "
+    "they are advisory."
 )
+
+SHEET_SYSTEM_PROMPT = (
+    "You are a strict quality reviewer for a character reference sheet that will be copied into every panel "
+    "of a comic sold alongside a physical handmade product. You are given PHOTOS of the real product (the "
+    "ground truth for the design) and a generated black-and-white manga SHEET showing several views. Every "
+    "view on the sheet must keep the product's design: shapes, proportions, markings, features and their "
+    "positions -- rendering style differs from the photo (ink and screentone vs yarn), so compare shapes, "
+    "never texture. Be literal: a feature that is smaller, larger, a different shape, in a different place, "
+    "or added/missing compared with the photo fails its check. Idealising or 'cleaning up' a distinctive "
+    "feature (for example turning an irregular patch into a neat symbol) is a failure. Expression and pose "
+    "may differ between views. Report the character once (visible=true). Answer every listed check using "
+    "the check text as its name; set unlisted_characters if any other character or hand is drawn, and "
+    "text_in_art if any labels or words appear on the sheet."
+)
+
 
 _SCHEMA = {
     "type": "object",
@@ -105,6 +123,10 @@ class PanelReview(BaseModel):
     summary: str
     strict_names: list[str] = []
 
+    def warnings(self) -> list[str]:
+        """Failed MINOR checks: advisory only, they never fail a panel or trigger a redraw."""
+        return [f"{c.name}: {k.name} -- {k.note}" for c in self.characters if c.visible for k in c.checks if k.name.startswith(MINOR_PREFIX) and not k.passed]
+
     def problems(self) -> list[str]:
         out = []
         for c in self.characters:
@@ -116,7 +138,7 @@ class PanelReview(BaseModel):
             if c.likeness <= (2 if strict else 1):
                 out.append(f"{c.name}: likeness {c.likeness}/5")
             if strict:  # main character: every individual check must pass
-                out += [f"{c.name}: {k.name} -- {k.note}" for k in c.checks if not k.passed]
+                out += [f"{c.name}: {k.name} -- {k.note}" for k in c.checks if not k.passed and not k.name.startswith(MINOR_PREFIX)]
         if self.unlisted_characters:
             out.append("unlisted character/person/hand in frame")
         if self.text_in_art:
@@ -222,15 +244,8 @@ class PanelJudge:
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is not set")
 
-    def _post(self, body: dict, attempts: int = 3):
-        """POST with a short retry on transient connection/SSL errors (a failed connection is not billed)."""
-        for attempt in range(attempts):
-            try:
-                return requests.post(self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, json=body, timeout=300)
-            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
-                if attempt == attempts - 1:
-                    raise
-                time.sleep(2 * (attempt + 1))
+    def _post(self, body: dict):
+        return post_with_retry(self.URL, headers={"Authorization": f"Bearer {self.api_key}"}, json=body, timeout=300)
 
     def locate_head(self, panel_image: Path, character: CharacterProfile, detail: str = "") -> tuple[float, float, float, float] | None:
         """Ask a small, cheap vision model where a character's head is (normalised box), or None."""
@@ -261,11 +276,12 @@ class PanelJudge:
         return self.box_cache[key]
 
     def _chat(self, body: dict, stage: str, detail: str) -> dict:
+        started = time.perf_counter()
         response = self._post(body)
-        response.raise_for_status()
+        raise_for_status(response)
         data = response.json()
         if self.usage_sink:
-            self.usage_sink(openai_chat_record(stage, body["model"], data.get("usage"), detail))
+            self.usage_sink(openai_chat_record(stage, body["model"], data.get("usage"), detail, seconds=time.perf_counter() - started))
         return data
 
     def review(
@@ -297,9 +313,12 @@ class PanelJudge:
                             {"type": "image_url", "image_url": {"url": _crop_url(panel_image, box), "detail": "high"}},
                         ]
 
+        return self._submit(SYSTEM_PROMPT, content, strict_names, detail)
+
+    def _submit(self, system: str, content: list[dict], strict_names: list[str], detail: str) -> PanelReview:
         body = {
             "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": content}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "panel_review", "strict": True, "schema": _SCHEMA}},
             "reasoning_effort": self.reasoning_effort,
         }
@@ -313,3 +332,15 @@ class PanelJudge:
             raise ValueError(f"Judge returned an invalid review: {message['content'][:300]!r}") from exc
         review.strict_names = strict_names
         return review
+
+    def review_sheet(self, sheet_path: Path, character: CharacterProfile, detail: str = "") -> PanelReview:
+        """Check a generated character sheet (several views) against the REAL product photo, which is
+        the ground truth. Catches drift at the source, before any panel copies it."""
+        checks = bible_checks(character) or DEFAULT_CHECKS
+        content: list[dict] = [
+            {"type": "text", "text": ALLOWED_TO_VARY + f"\n\n### {character.name}\nDescription: {character.visual_description or 'n/a'}\nChecks (apply to EVERY view on the sheet):\n" + "\n".join(f"- {k}" for k in checks)},
+        ]
+        if character.reference_image_path and Path(character.reference_image_path).exists():
+            content += [{"type": "text", "text": "REAL PRODUCT PHOTO (ground truth; ignore any hand, other objects or backdrop in it):"}, _image(Path(character.reference_image_path))]
+        content += [{"type": "text", "text": "\nGENERATED CHARACTER SHEET TO REVIEW (several views of the same character):"}, _image(sheet_path, 2048)]
+        return self._submit(SHEET_SYSTEM_PROMPT, content, [character.name], detail or f"sheet {character.name}")

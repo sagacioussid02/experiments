@@ -70,19 +70,21 @@ def test_panel_references_prefer_sheet_over_photo(tmp_path):
     assert gen._references(panel, [with_sheet]) == [photo]
 
 
-def test_sheet_stage_generates_once_and_skips_existing(tmp_path, monkeypatch):
+def test_sheet_stage_gives_main_candidates_supporting_one_and_skips_existing(tmp_path, monkeypatch):
     monkeypatch.setattr(orch_module, "project_dir", lambda pid: tmp_path / pid)
     monkeypatch.setattr(orch_module, "save_project", lambda p: None)
-    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(require_bible_approval=False, max_comic_cost_usd=100.0))
+    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(require_bible_approval=False, require_sheet_approval=True, sheet_candidates=3, max_comic_cost_usd=100.0, qa_max_retries=2))
     pipeline = ComicPipeline.__new__(ComicPipeline)
     pipeline.image_generator = MockImageGenerator()
-    project = ComicProject(id="t", characters=[_char("A", id="a"), _char("B", id="b")])
+    main, side = _char("A", id="a"), _char("B", id="b")
+    project = ComicProject(id="t", characters=[main, side])
 
     pipeline.generate_character_sheets(project)
-    assert all(c.sheet_image_path for c in project.characters)
+    assert len(main.sheet_candidates) == 3 and main.sheet_image_path is None and not main.sheet_approved  # waits for a human
+    assert len(side.sheet_candidates) == 1 and side.sheet_image_path and side.sheet_approved  # auto-selected
     assert project.status == "sheets_ready"
 
     calls = []
     pipeline.image_generator.generate_character_sheet = lambda *a, **k: calls.append(1)
     pipeline.generate_character_sheets(project)
-    assert calls == []
+    assert calls == []  # nothing regenerated

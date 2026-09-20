@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import textwrap
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import requests
 from PIL import Image, ImageDraw, ImageOps
 
 from app.config import settings
+from app.http import post_with_retry, raise_for_status
 from app.models import CharacterProfile, Panel, StoryArc
 from app.pipeline.bible import bible_prompt_block
 from app.usage import openai_image_record
@@ -38,6 +40,8 @@ def build_panel_prompt(panel: Panel, characters: list[CharacterProfile]) -> str:
         )
     else:
         parts.append("Draw no characters in this panel, only the setting. Do not add any person, hand or creature.")
+    if panel.retry_hint:
+        parts.append("CORRECTIONS -- the previous attempt at this panel had these problems; fix them exactly: " + panel.retry_hint)
     parts.append(
         "Black and white manga ink style, clean linework, screentone shading, dynamic composition. "
         "Keep every character exactly as in their reference sheet and the descriptions above: same face, "
@@ -53,8 +57,10 @@ def build_panel_prompt(panel: Panel, characters: list[CharacterProfile]) -> str:
 def build_sheet_prompt(character: CharacterProfile) -> str:
     return (
         f"Character reference sheet of {character.name} for a black-and-white manga. "
-        "Layout: one large full-body front view on the left; on the right a three-quarter view "
-        "and a close-up of the face with a neutral expression and a determined expression. "
+        "Layout: one large full-body front view on the left; on the right a grid of smaller views: a "
+        "three-quarter view, a low-angle view looking up at the character, a seated pose, a close-up of the "
+        "face with a neutral expression, and a close-up with a strong emotion (angry or shouting) drawn "
+        "exactly according to the design rules. Every view must keep the identical design. "
         "Pure white background: no gradient, vignette, glow, shadow, floor or backdrop, and no frames or "
         "divider lines between the views. Evenly lit, ink linework with screentone shading. "
         "Draw ONLY the character from the reference photo -- ignore any hands, people, other "
@@ -223,9 +229,10 @@ class OpenAIImageGenerator(ImageGenerator):
         output_path: Path,
     ) -> Path:
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        started = time.perf_counter()
         if references:
             files = [("image[]", (path.stem + ".jpg", _prepare_reference(path, self.reference_max_side), "image/jpeg")) for path in references]
-            response = requests.post(
+            response = post_with_retry(
                 self.EDIT_URL,
                 headers=headers,
                 data={"model": self.model, "prompt": prompt, "size": size, "quality": settings.openai_image_quality, "input_fidelity": fidelity},
@@ -233,16 +240,16 @@ class OpenAIImageGenerator(ImageGenerator):
                 timeout=300,
             )
         else:
-            response = requests.post(
+            response = post_with_retry(
                 self.GENERATE_URL,
                 headers=headers,
                 json={"model": self.model, "prompt": prompt, "size": size, "quality": settings.openai_image_quality},
                 timeout=300,
             )
-        response.raise_for_status()
+        raise_for_status(response)
         body = response.json()
         if self.usage_sink:
-            self.usage_sink(openai_image_record(stage, self.model, body.get("usage"), detail))
+            self.usage_sink(openai_image_record(stage, self.model, body.get("usage"), detail, seconds=time.perf_counter() - started))
         image_data = body.get("data", [{}])[0]
         if image_data.get("b64_json"):
             image_bytes = base64.b64decode(image_data["b64_json"])

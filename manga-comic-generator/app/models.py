@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class BibleMarker(BaseModel):
     feature: str = Field(description="e.g. 'Nose', 'Chest patch', 'Ears'")
     description: str = Field(description="Concrete, checkable description: shape, colour, relative size, position.")
+    critical: bool = Field(default=True, description="False for fine details (highlights, stitch counts): advisory only, never fails a panel.")
 
 
 class CharacterBible(BaseModel):
@@ -22,6 +23,12 @@ class CharacterBible(BaseModel):
     forbidden_words: list[str] = Field(default_factory=list, description="Words the script must not use when describing this character.")
     version: int = 1
     approved: bool = False
+
+
+class SheetCandidate(BaseModel):
+    path: str
+    problems: list[str] = Field(default_factory=list, description="Judge's findings vs the real product photo; fewer is better.")
+    checked: bool = False
 
 
 class CharacterProfile(BaseModel):
@@ -42,6 +49,8 @@ class CharacterProfile(BaseModel):
         default=None,
         description="Generated manga character sheet; used instead of the raw photo as the panel reference.",
     )
+    sheet_candidates: list[SheetCandidate] = Field(default_factory=list)
+    sheet_approved: bool = Field(default=False, description="A human picked this sheet; it is frozen and reused.")
     main: bool = Field(default=False, description="Gets a dedicated 'Character File' page at the front.")
     bible: Optional[CharacterBible] = None
 
@@ -75,6 +84,10 @@ class Panel(BaseModel):
     )
     orientation: Literal["square", "landscape", "portrait"] = "square"
     image_path: Optional[str] = None
+    retry_hint: str = Field(default="", description="Corrections from a failed QA attempt, fed into the next prompt.")
+    qa_attempts: int = 0
+    qa_passed: Optional[bool] = Field(default=None, description="None = not checked (no judge or judge error).")
+    qa_problems: list[str] = Field(default_factory=list)
 
 
 class ComicPage(BaseModel):
@@ -96,6 +109,7 @@ class UsageRecord(BaseModel):
     image_input_tokens: int = 0
     images: int = 0
     cost_usd: Optional[float] = None
+    seconds: Optional[float] = Field(default=None, description="Wall-clock time of the call (includes rate-limit waits and retries).")
 
 
 class ComicProject(BaseModel):

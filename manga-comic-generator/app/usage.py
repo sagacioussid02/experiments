@@ -31,13 +31,13 @@ OPENAI_CHAT_PRICES = {
 }
 
 
-def openai_chat_record(stage: str, model: str, usage: dict | None, detail: str = "") -> UsageRecord:
+def openai_chat_record(stage: str, model: str, usage: dict | None, detail: str = "", seconds: float | None = None) -> UsageRecord:
     usage = usage or {}
     inp = usage.get("prompt_tokens", 0) or 0
     out = usage.get("completion_tokens", 0) or 0  # includes reasoning tokens, which are billed as output
     price = next((v for k, v in OPENAI_CHAT_PRICES.items() if model == k or model.startswith(k + "-")), None)
     cost = (inp * price[0] + out * price[1]) / 1e6 if price and usage else None
-    return UsageRecord(stage=stage, provider="openai", model=model, detail=detail, input_tokens=inp, output_tokens=out, cost_usd=cost)
+    return UsageRecord(stage=stage, provider="openai", model=model, detail=detail, input_tokens=inp, output_tokens=out, cost_usd=cost, seconds=seconds)
 
 
 def _lookup(table: dict, model: str):
@@ -47,7 +47,7 @@ def _lookup(table: dict, model: str):
     return None
 
 
-def anthropic_record(stage: str, model: str, usage: Any, detail: str = "") -> UsageRecord:
+def anthropic_record(stage: str, model: str, usage: Any, detail: str = "", seconds: float | None = None) -> UsageRecord:
     inp = getattr(usage, "input_tokens", 0) or 0
     out = getattr(usage, "output_tokens", 0) or 0
     read = getattr(usage, "cache_read_input_tokens", 0) or 0
@@ -59,11 +59,11 @@ def anthropic_record(stage: str, model: str, usage: Any, detail: str = "") -> Us
         cost = (inp * p_in + out * p_out + read * p_in * CACHE_READ_MULTIPLIER + write * p_in * CACHE_WRITE_MULTIPLIER) / 1e6
     return UsageRecord(
         stage=stage, provider="anthropic", model=model, detail=detail, input_tokens=inp,
-        output_tokens=out, cache_read_tokens=read, cache_write_tokens=write, cost_usd=cost,
+        output_tokens=out, cache_read_tokens=read, cache_write_tokens=write, cost_usd=cost, seconds=seconds,
     )
 
 
-def openai_image_record(stage: str, model: str, usage: dict | None, detail: str = "") -> UsageRecord:
+def openai_image_record(stage: str, model: str, usage: dict | None, detail: str = "", seconds: float | None = None) -> UsageRecord:
     """usage is the `usage` object of an Images API response (None if the API omitted it)."""
     usage = usage or {}
     inp = usage.get("input_tokens", 0) or 0
@@ -75,7 +75,7 @@ def openai_image_record(stage: str, model: str, usage: dict | None, detail: str 
         cost = ((inp - image_in) * price["text_in"] + image_in * price["image_in"] + out * price["image_out"]) / 1e6
     return UsageRecord(
         stage=stage, provider="openai", model=model, detail=detail, input_tokens=inp,
-        output_tokens=out, image_input_tokens=image_in, images=1, cost_usd=cost,
+        output_tokens=out, image_input_tokens=image_in, images=1, cost_usd=cost, seconds=seconds,
     )
 
 

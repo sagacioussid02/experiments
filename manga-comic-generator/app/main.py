@@ -123,9 +123,31 @@ async def generate_cover(project_id: str) -> ComicProject:
     return pipeline.generate_cover(load_project(project_id))
 
 
+@app.post("/projects/{project_id}/characters/{character_id}/sheet/select")
+async def select_sheet(project_id: str, character_id: str, index: int) -> ComicProject:
+    """Pick candidate `index` (1-based) as the character's frozen sheet."""
+    try:
+        return pipeline.select_sheet(load_project(project_id), character_id, index)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/projects/{project_id}/characters/{character_id}/sheet/reset")
+async def reset_sheet(project_id: str, character_id: str) -> ComicProject:
+    try:
+        return pipeline.reset_sheets(load_project(project_id), character_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/projects/{project_id}/qa")
+async def get_qa(project_id: str) -> dict:
+    return pipeline.qa_report(load_project(project_id))
+
+
 @app.post("/projects/{project_id}/images")
-async def generate_images(project_id: str) -> ComicProject:
-    return pipeline.generate_images(load_project(project_id))
+async def generate_images(project_id: str, retry_flagged: bool = False) -> ComicProject:
+    return pipeline.generate_images(load_project(project_id), retry_flagged=retry_flagged)
 
 
 @app.post("/projects/{project_id}/compose")

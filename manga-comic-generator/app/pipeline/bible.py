@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import base64
 import re
 from pathlib import Path
@@ -22,8 +24,12 @@ _BIBLE_TOOL = {
                 "description": "6-10 identity markers, most recognisable first.",
                 "items": {
                     "type": "object",
-                    "properties": {"feature": {"type": "string"}, "description": {"type": "string"}},
-                    "required": ["feature", "description"],
+                    "properties": {
+                        "feature": {"type": "string"},
+                        "description": {"type": "string"},
+                        "critical": {"type": "boolean", "description": "true = makes the character recognisable at a glance (nose/trunk, ears, main patch, silhouette and proportions, defining eyes); false = fine detail (highlights, stitch counts, texture)"},
+                    },
+                    "required": ["feature", "description", "critical"],
                 },
             },
             "colours": {"type": "object", "additionalProperties": {"type": "string"}},
@@ -45,7 +51,7 @@ SYSTEM_PROMPT = (
     "proportions. `never` lists things the real product does not have that an illustrator might invent for "
     "an angry or dramatic pose (teeth, fangs, claws, a tail, clothing...). `forbidden_words` are the words a "
     "script writer must not use when describing this character (include singular and irregular plural forms, "
-    "e.g. 'tooth' and 'teeth'). `expression_notes` says how emotions must be drawn without breaking the design."
+    "e.g. 'tooth' and 'teeth'). `forbidden_words` must cover EVERY item in `never` (e.g. never 'eyebrows' -> 'eyebrow', 'brow'; never 'visible hand shapes' -> 'fist', 'hand', 'finger'). `expression_notes` says how emotions must be drawn without breaking the design."
 )
 
 
@@ -69,7 +75,7 @@ def bible_checks(character: CharacterProfile) -> list[str] | None:
     b = character.bible
     if not b or not b.markers:
         return None
-    checks = [f"{m.feature}: {m.description}" for m in b.markers]
+    checks = [f"{'' if m.critical else 'MINOR: '}{m.feature}: {m.description}" for m in b.markers]
     if b.never:
         checks.append("Nothing added: none of -- " + "; ".join(b.never))
     return checks
@@ -124,6 +130,7 @@ class BibleExtractor:
             f"Character: {character.name}. Owner's description: {character.visual_description or 'none given'}. "
             "Write the design bible for this character from the photo."
         )
+        started = time.perf_counter()
         response = self.client.messages.create(
             model=self.model,
             max_tokens=2500,
@@ -136,7 +143,7 @@ class BibleExtractor:
             tool_choice={"type": "tool", "name": "emit_character_bible"},
         )
         if self.usage_sink and getattr(response, "usage", None):
-            self.usage_sink(anthropic_record("bible", self.model, response.usage, character.name))
+            self.usage_sink(anthropic_record("bible", self.model, response.usage, character.name, seconds=time.perf_counter() - started))
         tool_use = next(block for block in response.content if block.type == "tool_use")
         bible = CharacterBible.model_validate(tool_use.input)
         if not bible.summary.strip():  # the model sometimes leaves it blank

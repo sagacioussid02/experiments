@@ -37,6 +37,10 @@ class Settings:
     judge_reasoning_effort: str = os.environ.get("JUDGE_REASONING_EFFORT", "low")
     locator_model: str = os.environ.get("LOCATOR_MODEL", "gpt-5-mini")
     require_bible_approval: bool = os.environ.get("REQUIRE_BIBLE_APPROVAL", "true").lower() not in ("0", "false", "no")
+    sheet_candidates: int = int(os.environ.get("SHEET_CANDIDATES", "3"))
+    require_sheet_approval: bool = os.environ.get("REQUIRE_SHEET_APPROVAL", "true").lower() not in ("0", "false", "no")
+    panel_qa: bool = os.environ.get("PANEL_QA", "true").lower() not in ("0", "false", "no")
+    qa_max_retries: int = int(os.environ.get("QA_MAX_RETRIES", "2"))
     max_comic_cost_usd: float = float(os.environ.get("MAX_COMIC_COST_USD", "5.0"))
     data_dir: str = os.environ.get("DATA_DIR", "data/projects")
 

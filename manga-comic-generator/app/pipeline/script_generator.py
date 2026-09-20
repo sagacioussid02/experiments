@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import json
 
 from anthropic import Anthropic
@@ -114,6 +116,7 @@ class ScriptGenerator:
             + (f"\n\nDesign rules from the character bibles (obey strictly):\n{script_rules(characters)}" if script_rules(characters) else "")
             + "\n\nStoryboard this into pages and panels."
         )
+        started = time.perf_counter()
         response = self.client.messages.create(
             model=self.model,
             max_tokens=4000,
@@ -123,7 +126,7 @@ class ScriptGenerator:
             tool_choice={"type": "tool", "name": "emit_script"},
         )
         if self.usage_sink and getattr(response, "usage", None):
-            self.usage_sink(anthropic_record("script", self.model, response.usage))
+            self.usage_sink(anthropic_record("script", self.model, response.usage, seconds=time.perf_counter() - started))
         tool_use = next(block for block in response.content if block.type == "tool_use")
 
         raw_input = tool_use.input
@@ -147,9 +150,9 @@ class ScriptGenerator:
             parsed = [ComicPage.model_validate(page) for page in pages]
         except ValidationError as exc:
             raise ValueError(f"Anthropic returned invalid page schema: {exc}") from exc
-        return self._enforce_forbidden_words(parsed, characters)
+        return self.enforce_forbidden_words(parsed, characters)
 
-    def _enforce_forbidden_words(self, pages: list[ComicPage], characters: list[CharacterProfile]) -> list[ComicPage]:
+    def enforce_forbidden_words(self, pages: list[ComicPage], characters: list[CharacterProfile]) -> list[ComicPage]:
         """Deterministic word check against each character's bible; offending panels get one targeted
         rewrite. Raises if a forbidden word survives, so a bad script never reaches paid image stages."""
         hits = find_forbidden(pages, characters)
@@ -165,6 +168,7 @@ class ScriptGenerator:
             + (f" | caption: {panels[(pg, pn)].caption}" if panels[(pg, pn)].caption else "")
             for pg, pn in sorted(offending)
         )
+        started = time.perf_counter()
         response = self.client.messages.create(
             model=self.model,
             max_tokens=2000,
@@ -177,7 +181,7 @@ class ScriptGenerator:
             tool_choice={"type": "tool", "name": "emit_fixes"},
         )
         if self.usage_sink and getattr(response, "usage", None):
-            self.usage_sink(anthropic_record("script", self.model, response.usage, "forbidden-word rewrite"))
+            self.usage_sink(anthropic_record("script", self.model, response.usage, "forbidden-word rewrite", seconds=time.perf_counter() - started))
         fixes = next(block for block in response.content if block.type == "tool_use").input.get("fixes", [])
         for fix in fixes:
             panel = panels.get((fix.get("page_number"), fix.get("panel_number")))

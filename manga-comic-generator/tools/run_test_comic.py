@@ -55,13 +55,15 @@ def clone_for_rerun(keep_sheets=(), reference_overrides=None) -> ComicProject:
         shutil.copy(src, d / src.name)
         old_sheet = c.sheet_image_path
         c.reference_image_path, c.sheet_image_path = str(d / src.name), None
+        c.sheet_candidates, c.sheet_approved = [], False
         if c.name in keep_sheets and old_sheet:
             shutil.copy(old_sheet, d / Path(old_sheet).name)
             c.sheet_image_path = str(d / Path(old_sheet).name)
         c.main = c.name == "Bruno"
+    project.cover_image_path = None
     for page in project.pages:
         for panel in page.panels:
-            panel.image_path = None
+            panel.image_path, panel.qa_attempts, panel.qa_passed, panel.qa_problems = None, 0, None, []
     save_project(project)
     MARKER.write_text(pid)
     return project
@@ -90,6 +92,19 @@ if __name__ == "__main__":
         project = clone_for_rerun(keep_sheets=("Bruno",), reference_overrides={"Sol": "refs/elephant_clean.png"})
         pipeline.generate_character_sheets(project)
         print("PROJECT", project.id)
+        report(project)
+    elif stage == "v4":  # new project keeping the approved bibles; draws sheet candidates and stops for your pick
+        project = clone_for_rerun()
+        pipeline.generate_character_sheets(project)
+        print("PROJECT", project.id)
+        report(project)
+    elif stage == "finish":  # after you picked the main sheet: cover + panels (with QA/retries) + PDF
+        project = load_project(MARKER.read_text().strip())
+        pipeline.generate_cover(project)
+        pipeline.generate_images(project)
+        pdf = pipeline.compose(project)
+        print("PDF", pdf)
+        print(json.dumps(pipeline.qa_report(project), indent=1))
         report(project)
     elif stage == "bible":
         project = load_project(MARKER.read_text().strip())
