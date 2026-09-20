@@ -108,6 +108,25 @@ can't do this return None and panels fall back to the photo. The cover art promp
 title (models letter it badly); `render_cover_page` letters the title, a 'starring' line and the
 tagline. Prompts name exactly which characters may appear and ban all text, including sound effects.
 
+## Character bible, script check and the vision judge
+
+Because the product is a physical handmade character that must look the same in every episode, each
+character has an editable, versioned **bible** (`CharacterBible`): identity markers with concrete
+shapes/sizes/positions, colours (kept for future colour episodes), expression rules, a `never` list
+and `forbidden_words`. It is drafted once by Claude from the product photo, edited by a human, and
+approved (the main character's bible must be approved before the script and sheets run; supporting
+characters are auto-approved and may drift a little). It is injected into every image prompt, becomes
+the judge's checklist, and drives a deterministic script check: a forbidden word (e.g. 'fangs') in a
+scene description triggers one targeted rewrite, and generation stops if it survives.
+
+`PanelJudge` is an independent OpenAI vision model (not the Claude that wrote the story) that checks a
+panel against the character sheet and bible. Measured on 30 panels: sending the panel at full
+resolution plus a zoomed head crop (located by a small model) beat the shrunk panel; medium reasoning
+effort and multi-run ensembles added cost without accuracy; the vague 1-5 likeness score and
+'patch position vs photo' checks caused false alarms and are no longer gates. Human labels made from
+thumbnails were noisier than the judge in places, so treat the judge as a filter with a human on
+flagged panels, not as a guarantee. Not yet wired into the pipeline (Phase 3: retries with reasons).
+
 ## Orchestration (`app/pipeline/orchestrator.py`)
 
 `ComicPipeline` exposes both the four stages individually and a `run_all` convenience method.

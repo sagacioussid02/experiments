@@ -21,6 +21,25 @@ OPENAI_IMAGE_PRICES = {  # gpt-image-1, per 1M tokens
 }
 
 
+# USD per 1M tokens (input, output) for OpenAI chat/vision models. Matched exactly or as
+# "<name>-<date>" so that e.g. "gpt-5.4" is NOT priced as "gpt-5" (unknown -> flagged unpriced).
+OPENAI_CHAT_PRICES = {
+    "gpt-5": (1.25, 10.0),
+    "gpt-5-mini": (0.25, 2.0),
+    "gpt-4.1": (2.0, 8.0),
+    "gpt-4o": (2.5, 10.0),
+}
+
+
+def openai_chat_record(stage: str, model: str, usage: dict | None, detail: str = "") -> UsageRecord:
+    usage = usage or {}
+    inp = usage.get("prompt_tokens", 0) or 0
+    out = usage.get("completion_tokens", 0) or 0  # includes reasoning tokens, which are billed as output
+    price = next((v for k, v in OPENAI_CHAT_PRICES.items() if model == k or model.startswith(k + "-")), None)
+    cost = (inp * price[0] + out * price[1]) / 1e6 if price and usage else None
+    return UsageRecord(stage=stage, provider="openai", model=model, detail=detail, input_tokens=inp, output_tokens=out, cost_usd=cost)
+
+
 def _lookup(table: dict, model: str):
     for prefix in sorted(table, key=len, reverse=True):
         if model.startswith(prefix):

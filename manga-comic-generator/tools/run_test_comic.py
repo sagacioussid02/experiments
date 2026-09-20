@@ -91,6 +91,15 @@ if __name__ == "__main__":
         pipeline.generate_character_sheets(project)
         print("PROJECT", project.id)
         report(project)
+    elif stage == "bible":
+        project = load_project(MARKER.read_text().strip())
+        pipeline.extract_bibles(project)
+        for c in project.characters:
+            print("=" * 70, "\n", c.name, "(main)" if c.main else "(supporting)", "| approved:", c.bible.approved)
+            print(json.dumps(c.bible.model_dump(), indent=1))
+        from app.pipeline.bible import find_forbidden
+        print("forbidden words used in the EXISTING script:", find_forbidden(project.pages, project.characters))
+        report(project)
     elif stage == "cover":
         project = load_project(MARKER.read_text().strip())
         pipeline.generate_cover(project)

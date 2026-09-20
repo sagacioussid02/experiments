@@ -489,6 +489,34 @@ def render_cover_page(
     return canvas.resize(PAGE_SIZE, Image.LANCZOS)
 
 
+def render_product_page(character: CharacterProfile, photo_path: str | Path | None, font_path: str | None = None) -> Image.Image:
+    """Back page: the real handmade product photo with its name and a short line, so the comic ends
+    on the thing the buyer actually owns."""
+    s = SUPERSAMPLE
+    W, H = PAGE_SIZE[0] * s, PAGE_SIZE[1] * s
+    canvas = Image.new("RGB", (W, H), "white")
+    draw = ImageDraw.Draw(canvas)
+    m = MARGIN * s
+    draw.rectangle([m // 2, m // 2, W - m // 2, H - m // 2], outline="black", width=BORDER * s)
+    draw.rectangle([m, m, W - m, m + 130 * s], fill="black")
+    draw.text((W // 2, m + 65 * s), "THE REAL " + character.name.upper(), fill="white", font=load_font(64 * s, font_path), anchor="mm")
+    top, bottom = m + 170 * s, H - m - 330 * s
+    box = (m, top, W - m, bottom)
+    if photo_path and Path(photo_path).exists():
+        photo = ImageOps.exif_transpose(Image.open(photo_path)).convert("RGB")
+        canvas.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]), Image.LANCZOS, centering=(0.5, 0.45)), (box[0], box[1]))
+    else:
+        draw.rectangle(box, fill=(238, 238, 238))
+    draw.rectangle(box, outline="black", width=BORDER * s)
+    line = f"{character.name} is handmade. This is the one you can hold."
+    font = load_font(46 * s, font_path)
+    y = bottom + 50 * s
+    for text in _wrap(line, font, W - 2 * m):
+        draw.text((W // 2, y), text, fill="black", font=font, anchor="ma")
+        y += int(font.size * 1.35)
+    return canvas.resize(PAGE_SIZE, Image.LANCZOS)
+
+
 def render_pages_to_pdf(pages: list[Image.Image], output_path: Path) -> Path:
     if not pages:
         raise ValueError("No pages to export")

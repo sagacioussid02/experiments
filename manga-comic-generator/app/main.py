@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.models import CharacterProfile, ComicProject
+from app.models import CharacterBible, CharacterProfile, ComicProject
 from app.pipeline.orchestrator import ComicPipeline
 from app.usage import summarize
 from app.storage import load_project, new_project_id, project_dir, save_project
@@ -66,6 +66,41 @@ async def run_pipeline(project_id: str) -> ComicProject:
     project = load_project(project_id)
     pipeline.run_all(project, project.theme)
     return load_project(project_id)
+
+
+@app.post("/projects/{project_id}/bibles")
+async def extract_bibles(project_id: str) -> ComicProject:
+    return pipeline.extract_bibles(load_project(project_id))
+
+
+@app.get("/projects/{project_id}/characters/{character_id}/bible")
+async def get_bible(project_id: str, character_id: str) -> CharacterBible:
+    character = next((c for c in load_project(project_id).characters if c.id == character_id), None)
+    if not character or not character.bible:
+        raise HTTPException(status_code=404, detail="No bible for that character")
+    return character.bible
+
+
+@app.put("/projects/{project_id}/characters/{character_id}/bible")
+async def update_bible(project_id: str, character_id: str, bible: CharacterBible) -> CharacterBible:
+    """Replace a character's bible (any edit bumps the version and requires re-approval)."""
+    project = load_project(project_id)
+    character = next((c for c in project.characters if c.id == character_id), None)
+    if not character:
+        raise HTTPException(status_code=404, detail="No such character")
+    previous = character.bible.version if character.bible else 0
+    bible.version, bible.approved = previous + 1, False
+    character.bible = bible
+    save_project(project)
+    return bible
+
+
+@app.post("/projects/{project_id}/characters/{character_id}/bible/approve")
+async def approve_bible(project_id: str, character_id: str) -> ComicProject:
+    try:
+        return pipeline.approve_bible(load_project(project_id), character_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/projects/{project_id}/story")

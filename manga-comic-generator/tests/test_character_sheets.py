@@ -73,6 +73,7 @@ def test_panel_references_prefer_sheet_over_photo(tmp_path):
 def test_sheet_stage_generates_once_and_skips_existing(tmp_path, monkeypatch):
     monkeypatch.setattr(orch_module, "project_dir", lambda pid: tmp_path / pid)
     monkeypatch.setattr(orch_module, "save_project", lambda p: None)
+    monkeypatch.setattr(orch_module, "settings", SimpleNamespace(require_bible_approval=False, max_comic_cost_usd=100.0))
     pipeline = ComicPipeline.__new__(ComicPipeline)
     pipeline.image_generator = MockImageGenerator()
     project = ComicProject(id="t", characters=[_char("A", id="a"), _char("B", id="b")])

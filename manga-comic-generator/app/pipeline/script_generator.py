@@ -6,6 +6,7 @@ from anthropic import Anthropic
 from pydantic import ValidationError
 
 from app.config import settings
+from app.pipeline.bible import find_forbidden, script_rules
 from app.usage import anthropic_record
 from app.models import CharacterProfile, ComicPage, StoryArc
 
@@ -80,6 +81,20 @@ _SCRIPT_TOOL = {
 }
 
 
+_FIX_TOOL = {
+    "name": "emit_fixes",
+    "description": "Return rewritten scene descriptions for the listed panels.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"fixes": {"type": "array", "items": {"type": "object", "properties": {
+            "page_number": {"type": "integer"}, "panel_number": {"type": "integer"},
+            "scene_description": {"type": "string"}, "caption": {"type": ["string", "null"]},
+        }, "required": ["page_number", "panel_number", "scene_description"]}}},
+        "required": ["fixes"],
+    },
+}
+
+
 class ScriptGenerator:
     def __init__(self, client: Anthropic | None = None, model: str | None = None):
         self.client = client or Anthropic(api_key=settings.anthropic_api_key)
@@ -96,7 +111,8 @@ class ScriptGenerator:
             f"Title: {story.title}\nGenre: {story.genre}\nSynopsis: {story.synopsis}\n"
             f"Chapters:\n{chapters}\n\n"
             f"Character appearance sheet (keep these consistent in every scene_description):\n{appearance_sheet}"
-            "\n\nStoryboard this into pages and panels."
+            + (f"\n\nDesign rules from the character bibles (obey strictly):\n{script_rules(characters)}" if script_rules(characters) else "")
+            + "\n\nStoryboard this into pages and panels."
         )
         response = self.client.messages.create(
             model=self.model,
@@ -128,6 +144,48 @@ class ScriptGenerator:
             )
 
         try:
-            return [ComicPage.model_validate(page) for page in pages]
+            parsed = [ComicPage.model_validate(page) for page in pages]
         except ValidationError as exc:
             raise ValueError(f"Anthropic returned invalid page schema: {exc}") from exc
+        return self._enforce_forbidden_words(parsed, characters)
+
+    def _enforce_forbidden_words(self, pages: list[ComicPage], characters: list[CharacterProfile]) -> list[ComicPage]:
+        """Deterministic word check against each character's bible; offending panels get one targeted
+        rewrite. Raises if a forbidden word survives, so a bad script never reaches paid image stages."""
+        hits = find_forbidden(pages, characters)
+        if not hits:
+            return pages
+        offending = {(pg, pn) for pg, pn, _ in hits}
+        words = sorted({w for _, _, w in hits})
+        panels = {
+            (page.page_number, panel.panel_number): panel for page in pages for panel in page.panels
+        }
+        listing = "\n".join(
+            f"- page {pg} panel {pn}: {panels[(pg, pn)].scene_description}"
+            + (f" | caption: {panels[(pg, pn)].caption}" if panels[(pg, pn)].caption else "")
+            for pg, pn in sorted(offending)
+        )
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2000,
+            system="You fix comic panel descriptions. Keep meaning, drama and framing; only change wording.",
+            messages=[{"role": "user", "content": (
+                f"Rewrite these panel descriptions so they never use these words (or any form of them): {', '.join(words)}. "
+                "Convey the same emotion through eyes, brows, posture and movement instead.\n" + listing
+            )}],
+            tools=[_FIX_TOOL],
+            tool_choice={"type": "tool", "name": "emit_fixes"},
+        )
+        if self.usage_sink and getattr(response, "usage", None):
+            self.usage_sink(anthropic_record("script", self.model, response.usage, "forbidden-word rewrite"))
+        fixes = next(block for block in response.content if block.type == "tool_use").input.get("fixes", [])
+        for fix in fixes:
+            panel = panels.get((fix.get("page_number"), fix.get("panel_number")))
+            if panel:
+                panel.scene_description = fix.get("scene_description", panel.scene_description)
+                if panel.caption is not None and "caption" in fix:
+                    panel.caption = fix["caption"]
+        remaining = find_forbidden(pages, characters)
+        if remaining:
+            raise ValueError(f"Script still uses forbidden words after a rewrite: {remaining}")
+        return pages

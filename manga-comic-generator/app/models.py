@@ -5,6 +5,25 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class BibleMarker(BaseModel):
+    feature: str = Field(description="e.g. 'Nose', 'Chest patch', 'Ears'")
+    description: str = Field(description="Concrete, checkable description: shape, colour, relative size, position.")
+
+
+class CharacterBible(BaseModel):
+    """The locked, editable design of a character. Extracted once from the product photos, edited and
+    approved by a human, then injected into every prompt and used to build the judge's checklist."""
+
+    summary: str = ""
+    markers: list[BibleMarker] = Field(default_factory=list)
+    colours: dict[str, str] = Field(default_factory=dict, description="Real colours, kept for future colour episodes.")
+    expression_notes: str = Field(default="", description="How expressions must be drawn (e.g. shouting = plain open oval mouth, no teeth).")
+    never: list[str] = Field(default_factory=list, description="Things this character must never have or show.")
+    forbidden_words: list[str] = Field(default_factory=list, description="Words the script must not use when describing this character.")
+    version: int = 1
+    approved: bool = False
+
+
 class CharacterProfile(BaseModel):
     id: str
     name: str
@@ -24,6 +43,7 @@ class CharacterProfile(BaseModel):
         description="Generated manga character sheet; used instead of the raw photo as the panel reference.",
     )
     main: bool = Field(default=False, description="Gets a dedicated 'Character File' page at the front.")
+    bible: Optional[CharacterBible] = None
 
 
 class StoryArc(BaseModel):
@@ -65,7 +85,7 @@ class ComicPage(BaseModel):
 class UsageRecord(BaseModel):
     """One billable API call. cost_usd is None when the model has no known price."""
 
-    stage: Literal["story", "script", "sheets", "cover", "images"]
+    stage: Literal["story", "script", "bible", "sheets", "cover", "images", "qa"]
     provider: Literal["anthropic", "openai"]
     model: str
     detail: str = ""

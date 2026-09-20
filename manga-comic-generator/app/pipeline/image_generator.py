@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from app.config import settings
 from app.models import CharacterProfile, Panel, StoryArc
+from app.pipeline.bible import bible_prompt_block
 from app.usage import openai_image_record
 
 
@@ -24,7 +25,7 @@ def build_panel_prompt(panel: Panel, characters: list[CharacterProfile]) -> str:
     """
     by_name = {c.name: c for c in characters}
     present = [by_name[name] for name in panel.characters if name in by_name]
-    sheet = "\n".join(f"{c.name} looks like: {c.visual_description}" for c in present if c.visual_description)
+    sheet = "\n".join(bible_prompt_block(c) or (f"{c.name} looks like: {c.visual_description}" if c.visual_description else "") for c in present).strip()
     parts = [f"Manga panel, {panel.camera_angle}. {panel.scene_description}"]
     if len(present) > 1:
         parts.append("Characters left to right in the frame: " + ", ".join(c.name for c in present) + ".")
@@ -59,7 +60,7 @@ def build_sheet_prompt(character: CharacterProfile) -> str:
         "Draw ONLY the character from the reference photo -- ignore any hands, people, other "
         "characters, furniture or backdrop in it. Preserve the exact design: shape, proportions, "
         "eyes, nose, ears, markings/patches and fur or yarn texture. "
-        + (f"Appearance notes: {character.visual_description}. " if character.visual_description else "")
+        + (bible_prompt_block(character) + "\n" if bible_prompt_block(character) else (f"Appearance notes: {character.visual_description}. " if character.visual_description else ""))
         + "Do NOT draw any text, labels, arrows or borders."
     )
 
@@ -68,7 +69,7 @@ def build_cover_prompt(story: StoryArc, characters: list[CharacterProfile]) -> s
     """The title is deliberately NOT in the prompt: image models try to letter it, badly. The
     compositor adds the title on top of the art."""
     names = ", ".join(c.name for c in characters)
-    looks = "\n".join(f"{c.name} looks like: {c.visual_description}" for c in characters if c.visual_description)
+    looks = "\n".join(bible_prompt_block(c) or (f"{c.name} looks like: {c.visual_description}" if c.visual_description else "") for c in characters).strip()
     return (
         f"Cover illustration for a black-and-white {story.genre} manga. Story: {story.logline} "
         f"Show exactly these characters together in a dramatic, eye-catching hero composition: {names}. "
