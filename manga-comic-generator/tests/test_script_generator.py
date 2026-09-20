@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.models import CharacterProfile, StoryArc
 from app.pipeline.script_generator import ScriptGenerator
 
@@ -58,3 +60,28 @@ def test_generate_parses_forced_tool_call_into_pages():
     _, kwargs = fake_client.messages.create.call_args
     assert kwargs["tool_choice"] == {"type": "tool", "name": "emit_script"}
     assert "eye patch" in kwargs["messages"][0]["content"]
+
+
+def test_generate_raises_clear_error_when_tool_call_lacks_pages():
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_tool_response({"summary": "No pages returned"})
+
+    generator = ScriptGenerator(client=fake_client, model="claude-sonnet-5")
+    story = StoryArc(
+        title="Last Light",
+        genre="drama",
+        logline="A lighthouse keeper faces one final storm.",
+        synopsis="Kaya must decide whether to abandon her post.",
+        chapters=["Setup", "Storm hits", "Resolution"],
+    )
+    characters = [
+        CharacterProfile(
+            id="char_0",
+            name="Kaya",
+            backstory="A retired storm-chaser.",
+            visual_description="Tall, silver undercut, weathered coat, eye patch",
+        )
+    ]
+
+    with pytest.raises(ValueError, match="missing the required 'pages' list"):
+        generator.generate(story, characters)

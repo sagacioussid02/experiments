@@ -3,6 +3,7 @@ from __future__ import annotations
 from anthropic import Anthropic
 
 from app.config import settings
+from app.usage import anthropic_record
 from app.models import CharacterProfile, StoryArc
 
 SYSTEM_PROMPT = (
@@ -38,6 +39,7 @@ class StoryGenerator:
     def __init__(self, client: Anthropic | None = None, model: str | None = None):
         self.client = client or Anthropic(api_key=settings.anthropic_api_key)
         self.model = model or settings.claude_model
+        self.usage_sink = None  # set by the orchestrator: callable(UsageRecord)
 
     def generate(self, characters: list[CharacterProfile], theme: str | None = None) -> StoryArc:
         cast = "\n\n".join(
@@ -55,5 +57,7 @@ class StoryGenerator:
             tools=[_STORY_ARC_TOOL],
             tool_choice={"type": "tool", "name": "emit_story_arc"},
         )
+        if self.usage_sink and getattr(response, "usage", None):
+            self.usage_sink(anthropic_record("story", self.model, response.usage))
         tool_use = next(block for block in response.content if block.type == "tool_use")
         return StoryArc.model_validate(tool_use.input)

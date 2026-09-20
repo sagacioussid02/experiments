@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+import json
+
 from anthropic import Anthropic
+from pydantic import ValidationError
 
 from app.config import settings
+from app.usage import anthropic_record
 from app.models import CharacterProfile, ComicPage, StoryArc
 
 SYSTEM_PROMPT = (
     "You are a manga storyboard artist. Break a story arc into concrete pages and panels. "
     "Aim for 3-6 panels per page. Every panel needs a scene_description specific enough for "
     "an illustrator to draw it without further context (setting, character poses/expressions, "
-    "camera framing). Keep dialogue short -- comic bubbles have little room."
+    "camera framing). Keep dialogue short -- at most 2 lines per panel and about 12 words per line, "
+    "since bubbles have little room. List each panel's `characters` in left-to-right order of "
+    "where they stand in the frame; bubble tails are placed from that order. Set `importance` "
+    "to 1 for ordinary beats, 2 for emphasis, and 3 (at most one per page, at most one every "
+    "few pages) for a splash panel at a climax or reveal. Never put dialogue in "
+    "scene_description; use the dialogue and caption fields. scene_description must describe only "
+    "what is visible: never mention sound effects, onomatopoeia, or lettering (the illustrator is "
+    "told not to draw any text), and only include characters listed in that panel's `characters`."
 )
 
 _SCRIPT_TOOL = {
@@ -33,6 +44,7 @@ _SCRIPT_TOOL = {
                                     "characters": {"type": "array", "items": {"type": "string"}},
                                     "scene_description": {"type": "string"},
                                     "camera_angle": {"type": "string"},
+                                    "importance": {"type": "integer", "enum": [1, 2, 3]},
                                     "caption": {"type": ["string", "null"]},
                                     "dialogue": {
                                         "type": "array",
@@ -72,6 +84,7 @@ class ScriptGenerator:
     def __init__(self, client: Anthropic | None = None, model: str | None = None):
         self.client = client or Anthropic(api_key=settings.anthropic_api_key)
         self.model = model or settings.claude_model
+        self.usage_sink = None  # set by the orchestrator: callable(UsageRecord)
 
     def generate(self, story: StoryArc, characters: list[CharacterProfile]) -> list[ComicPage]:
         # Re-sending the appearance sheet here (in addition to inside the image-gen prompt
@@ -93,5 +106,28 @@ class ScriptGenerator:
             tools=[_SCRIPT_TOOL],
             tool_choice={"type": "tool", "name": "emit_script"},
         )
+        if self.usage_sink and getattr(response, "usage", None):
+            self.usage_sink(anthropic_record("script", self.model, response.usage))
         tool_use = next(block for block in response.content if block.type == "tool_use")
-        return [ComicPage.model_validate(page) for page in tool_use.input["pages"]]
+
+        raw_input = tool_use.input
+        if isinstance(raw_input, str):
+            try:
+                raw_input = json.loads(raw_input)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Anthropic returned a non-JSON script payload: {raw_input!r}") from exc
+
+        if not isinstance(raw_input, dict):
+            raise ValueError(f"Anthropic tool call did not return a dict payload: {raw_input!r}")
+
+        pages = raw_input.get("pages")
+        if not isinstance(pages, list):
+            raise ValueError(
+                "Anthropic tool call is missing the required 'pages' list. "
+                f"Received payload: {raw_input!r}"
+            )
+
+        try:
+            return [ComicPage.model_validate(page) for page in pages]
+        except ValidationError as exc:
+            raise ValueError(f"Anthropic returned invalid page schema: {exc}") from exc

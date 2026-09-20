@@ -86,12 +86,27 @@ next step:
 
 ## Stage 5 — Layout / compositing (`app/pipeline/layout.py`)
 
-Built directly on Pillow rather than, say, rendering HTML/CSS with a headless browser. Panel
-layout is simple 2D geometry (grid position, bubble placement, text wrapping) and Pillow gives
-direct pixel control with no extra runtime dependency. The trade-off is real: no CSS means
-anything fancier than rectangular panels (angled panel borders, bubble tails, bleed panels)
-has to be hand-rolled — `_grid_for` is a deliberately simple panel-count → rows/cols heuristic,
-not a real manga layout engine, and is called out as a follow-up below.
+Built directly on Pillow. `plan_page` turns a page's panels into polygons: panels are grouped into
+rows (`_ROW_TEMPLATES`), a panel with `importance == 3` gets a taller full-width splash row, row
+heights follow importance, and vertical gutters are slanted (alternating per row). `render_page`
+draws at 2x and downsamples for anti-aliasing, cover-crops each image to its panel (no stretching),
+then letters on top: caption boxes, oval speech bubbles, thought bubbles (trailing circles) and
+spiked shout bubbles, each with a tail toward the speaker. A speaker's horizontal position comes
+from their index in `panel.characters`, which the script prompt asks for in left-to-right order,
+and the image prompt repeats it. Bubbles are stacked in the top of the panel, so the image prompt
+asks for open space there and for no text in the art. `assign_orientations` (run after script
+generation) sets each panel's `orientation` so the OpenAI backend requests landscape/portrait art
+matching the panel shape. Reading order is left-to-right.
+
+## Character sheets, cover and character file
+
+Raw photos make poor panel references (backgrounds, hands, other subjects, wrong style), so a
+`generate_character_sheets` stage first renders one clean black-and-white manga sheet per
+character (high input fidelity, once); every panel and the cover then reference the sheet at low
+fidelity, which is both more consistent and about 65% cheaper per panel (measured). Backends that
+can't do this return None and panels fall back to the photo. The cover art prompt never contains the
+title (models letter it badly); `render_cover_page` letters the title, a 'starring' line and the
+tagline. Prompts name exactly which characters may appear and ban all text, including sound effects.
 
 ## Orchestration (`app/pipeline/orchestrator.py`)
 
@@ -119,6 +134,7 @@ no reason to add a JS toolchain before the pipeline itself is solid.
 | Story generation | Real (needs `ANTHROPIC_API_KEY`) |
 | Script generation | Real (needs `ANTHROPIC_API_KEY`) |
 | Image generation — mock | Real, fully working, no external deps |
+| Image generation — OpenAI | Real; reference photos via the edits endpoint (needs `OPENAI_API_KEY`) |
 | Image generation — Stability AI | Real HTTP integration (needs `STABILITY_API_KEY`); no image-conditioning yet |
 | Layout / PDF export | Real, fully working, no external deps |
 

@@ -10,8 +10,10 @@ See [`DESIGN.md`](DESIGN.md) for why each part of the pipeline is built the way 
 ```
 CharacterProfile[]  --(Claude, tool-use)-->  StoryArc
 StoryArc + Characters --(Claude, tool-use)-->  ComicPage[] (panels + dialogue)
-ComicPage[].panels --(ImageGenerator)-->  panel PNGs
-ComicPage[] + panel PNGs --(Pillow)-->  page PNGs + comic.pdf
+Characters + photos --(ImageGenerator)-->  one manga character sheet each
+StoryArc + sheets  --(ImageGenerator)-->  cover art
+ComicPage[].panels + sheets --(ImageGenerator)-->  panel PNGs
+cover + character file + pages --(Pillow)-->  page PNGs + comic.pdf  (+ usage.json cost report)
 ```
 
 ## Quick start
@@ -29,7 +31,13 @@ visual description, optionally a reference photo), pick a theme, and generate. W
 `IMAGE_BACKEND=mock` the whole pipeline runs with zero image-gen cost, drawing placeholder
 panels so you can see the story/script/layout working end-to-end.
 
-To use a real image backend, set `IMAGE_BACKEND=stability` and `STABILITY_API_KEY` in `.env`.
+The PDF is: cover, a Character File page for the main character (the first character, or any
+flagged `main`), then the story pages. `GET /projects/{id}/usage` (and `usage.json`) report tokens and
+estimated cost per stage; `MAX_COMIC_COST_USD` caps spend and re-running resumes where it stopped.
+
+To use a real image backend, set `IMAGE_BACKEND=openai` and `OPENAI_API_KEY` in `.env` (reference
+photos are passed to the image-edit endpoint to keep characters consistent), or
+`IMAGE_BACKEND=stability` with `STABILITY_API_KEY`.
 
 ## Running the pipeline without the web UI
 

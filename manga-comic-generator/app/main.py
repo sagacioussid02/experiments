@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.models import CharacterProfile, ComicProject
 from app.pipeline.orchestrator import ComicPipeline
+from app.usage import summarize
 from app.storage import load_project, new_project_id, project_dir, save_project
 
 app = FastAPI(title="Manga Comic Generator")
@@ -43,6 +44,7 @@ async def create_project(
                 personality=personalities[i] if i < len(personalities) else "",
                 visual_description=visual_descriptions[i] if i < len(visual_descriptions) else "",
                 reference_image_path=reference_image_path,
+                main=(i == 0),
             )
         )
 
@@ -76,6 +78,16 @@ async def generate_script(project_id: str) -> ComicProject:
     return pipeline.generate_script(load_project(project_id))
 
 
+@app.post("/projects/{project_id}/sheets")
+async def generate_character_sheets(project_id: str) -> ComicProject:
+    return pipeline.generate_character_sheets(load_project(project_id))
+
+
+@app.post("/projects/{project_id}/cover")
+async def generate_cover(project_id: str) -> ComicProject:
+    return pipeline.generate_cover(load_project(project_id))
+
+
 @app.post("/projects/{project_id}/images")
 async def generate_images(project_id: str) -> ComicProject:
     return pipeline.generate_images(load_project(project_id))
@@ -85,6 +97,15 @@ async def generate_images(project_id: str) -> ComicProject:
 async def compose(project_id: str) -> ComicProject:
     pipeline.compose(load_project(project_id))
     return load_project(project_id)
+
+
+@app.get("/projects/{project_id}/usage")
+async def get_usage(project_id: str) -> dict:
+    try:
+        project = load_project(project_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {**summarize(project.usage), "records": [r.model_dump() for r in project.usage]}
 
 
 @app.get("/projects/{project_id}/pdf")
